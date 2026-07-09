@@ -1,0 +1,13 @@
+name: 3dgs
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch-gpu
+  - torchvision
+  - torchmetrics
+  - matplotlib
+  - colorama
+  - pip
+  - pip:
+    - slangpy
