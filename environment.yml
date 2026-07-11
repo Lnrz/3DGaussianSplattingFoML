@@ -6,6 +6,9 @@ dependencies:
   - pytorch-gpu
   - torchvision
   - torchmetrics
+  - pycolmap
+  - scipy
+  - plyfile
   - matplotlib
   - colorama
   - pip
