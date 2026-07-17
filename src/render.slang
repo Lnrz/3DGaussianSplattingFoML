@@ -261,18 +261,35 @@ void createGaussianInstances(
     }
 }
 
-void findTileRanges(uint idx, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges) {
-    let last_idx = keys.shape[0] - 2;
-    if (idx > last_idx) return;
+void findTileRangesNoShuffle(uint idx, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges) {
+    let lastIdx = keys.shape[0] - 2;
+    if (idx > lastIdx) return;
     
-    let next_idx = idx + 1;
+    let nextIdx = idx + 1;
     let prevTileId = extractTileId(keys[idx]);
-    let nextTileId = extractTileId(keys[next_idx]);
-    if (idx == 0) ranges[prevTileId, 0] = idx;
-    if (idx == last_idx) ranges[nextTileId, 1] = next_idx + 1;
+    let nextTileId = extractTileId(keys[nextIdx]);
+    if (idx == 0) ranges[prevTileId, 0] = 0;
+    if (idx == lastIdx) ranges[nextTileId, 1] = keys.shape[0];
     if (prevTileId == nextTileId) return;
-    ranges[prevTileId, 1] = next_idx;
-    ranges[nextTileId, 0] = next_idx;
+    ranges[prevTileId, 1] = nextIdx;
+    ranges[nextTileId, 0] = nextIdx;
+}
+
+void findTileRanges(uint idx, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges) {
+    let lastIdx = keys.shape[0] - 1;
+    if (idx > lastIdx) return;
+
+    let tileId = extractTileId(keys[idx]);
+    var prevTileId = WaveReadLaneAt(tileId, WaveGetLaneIndex() - 1);
+    if (WaveIsFirstLane()) {
+        prevTileId = (idx == 0) ? tileId : extractTileId(keys[idx - 1]);
+    }
+
+    if (idx == 0) ranges[tileId, 0] = 0;
+    if (idx == lastIdx) ranges[tileId, 1] = keys.shape[0];
+    if (prevTileId == tileId) return;
+    ranges[prevTileId, 1] = idx;
+    ranges[tileId, 0] = idx;
 }
 
 void renderGaussians(
