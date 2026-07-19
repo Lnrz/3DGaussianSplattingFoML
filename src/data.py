@@ -167,7 +167,7 @@ class GaussiansInstances:
             self.sorted_indices = torch.empty(size, dtype=torch.int32, device=device)
             self.keys = torch.empty(size, dtype=torch.int64, device=device)
             self.sorted_keys = torch.empty(size, dtype=torch.int64, device=device)
-            self.sorted_keys_indices = torch.empty(size, dtype=torch.int32, device=device)
+            self.sorted_keys_indices = torch.empty(size, dtype=torch.int64, device=device)
 
     def to_device(self, device):
         self.counts = self.counts.to(device)
