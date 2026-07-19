@@ -11,12 +11,12 @@ from pathlib import Path
 
 
 STARTING_OPACITY = -2.19722457734   # logit for 10% initial opacity
-C_00 = 0.28209479177387814          # normalizing constant of the spherical harmonic Y_0^0
+N0 = 0.28209479177387814          # normalizing constant of the spherical harmonic Y_0^0
 TILE_SIZE = 16
 
 
 def to_zero_deg_sh_coef(value, scale=1/255, offset=-.5):
-    return (value*scale + offset) / C_00
+    return (value*scale + offset) / N0
 
 def half_fov_sin_cos_from_colmap_camera(camera):
     half_fov_x = np.atan(camera.width / (2. * camera.focal_length_x))

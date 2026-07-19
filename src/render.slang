@@ -103,19 +103,25 @@ float3 getCameraCenter(float3x4 extrinsics) {
     return -mul(translation, rotation);
 }
 
-// TODO: make this a struct
-static const float[] shNormConsts = {
-    0.28209479177387814, // 0 - C_0^0
-    0.4886025119029199,  // 1 - C_1^(-1,0,1)
-    1.0925484305920792,  // 2 - C_2^(-2,-1,1)
-    0.31539156525252005, // 3 - C_2^0
-    0.5462742152960396,  // 4 - C_2^2
-    0.5900435899266435,  // 5 - C_3^(-3,3)
-    2.890611442640554,   // 6 - C_3^-2
-    0.4570457994644658,  // 7 - C_3^(-1,1)
-    0.3731763325901154,  // 8 - C_3^0
-    1.445305721320277    // 9 - C_3^2
-};
+namespace ShNorm {
+    static const float N0 = 0.28209479177387814;
+    
+    static const float N1 = 0.4886025119029199;
+    
+    static const float N2_m2 = 1.0925484305920792;
+    static const float N2_m1 = 1.0925484305920792;
+    static const float N2_0 = 0.31539156525252005;
+    static const float N2_p1 = 1.0925484305920792;
+    static const float N2_p2 = 0.5462742152960396;
+    
+    static const float N3_m3 = 0.5900435899266435;
+    static const float N3_m2 = 2.890611442640554;
+    static const float N3_m1 = 0.4570457994644658;
+    static const float N3_0 = 0.3731763325901154;
+    static const float N3_p1 = 0.4570457994644658;
+    static const float N3_p2 = 1.445305721320277;
+    static const float N3_p3 = 0.5900435899266435;
+}
 
 float3 computeColor(float3 direction, ITensor<float, 3> shCoefs, uint idx, int maxDeg) {
     let x = direction.x;
@@ -127,25 +133,25 @@ float3 computeColor(float3 direction, ITensor<float, 3> shCoefs, uint idx, int m
     let z2 = z * z;
     float3 color = 0;
 
-    color += float3(shCoefs[0, idx, 0], shCoefs[0, idx, 1], shCoefs[0, idx, 2]) * shNormConsts[0];
+    color += float3(shCoefs[0, idx, 0], shCoefs[0, idx, 1], shCoefs[0, idx, 2]) * ShNorm::N0;
     if (maxDeg < 1) return color;
-    color += float3(shCoefs[1, idx, 0], shCoefs[1, idx, 1], shCoefs[1, idx, 2]) * shNormConsts[1] * y;
-    color += float3(shCoefs[2, idx, 0], shCoefs[2, idx, 1], shCoefs[2, idx, 2]) * shNormConsts[1] * z;
-    color += float3(shCoefs[3, idx, 0], shCoefs[3, idx, 1], shCoefs[3, idx, 2]) * shNormConsts[1] * x;
+    color += float3(shCoefs[1, idx, 0], shCoefs[1, idx, 1], shCoefs[1, idx, 2]) * ShNorm::N1 * y;
+    color += float3(shCoefs[2, idx, 0], shCoefs[2, idx, 1], shCoefs[2, idx, 2]) * ShNorm::N1 * z;
+    color += float3(shCoefs[3, idx, 0], shCoefs[3, idx, 1], shCoefs[3, idx, 2]) * ShNorm::N1 * x;
     if (maxDeg < 2) return color;
-    color += float3(shCoefs[4, idx, 0], shCoefs[4, idx, 1], shCoefs[4, idx, 2]) * shNormConsts[2] * xy;
-    color += float3(shCoefs[5, idx, 0], shCoefs[5, idx, 1], shCoefs[5, idx, 2]) * shNormConsts[2] * y*z;
-    color += float3(shCoefs[6, idx, 0], shCoefs[6, idx, 1], shCoefs[6, idx, 2]) * shNormConsts[3] * (3*z2 - 1);
-    color += float3(shCoefs[7, idx, 0], shCoefs[7, idx, 1], shCoefs[7, idx, 2]) * shNormConsts[2] * x*z;
-    color += float3(shCoefs[8, idx, 0], shCoefs[8, idx, 1], shCoefs[8, idx, 2]) * shNormConsts[4] * (x2 - y2);
+    color += float3(shCoefs[4, idx, 0], shCoefs[4, idx, 1], shCoefs[4, idx, 2]) * ShNorm::N2_m2 * xy;
+    color += float3(shCoefs[5, idx, 0], shCoefs[5, idx, 1], shCoefs[5, idx, 2]) * ShNorm::N2_m1 * y*z;
+    color += float3(shCoefs[6, idx, 0], shCoefs[6, idx, 1], shCoefs[6, idx, 2]) * ShNorm::N2_0 * (3*z2 - 1);
+    color += float3(shCoefs[7, idx, 0], shCoefs[7, idx, 1], shCoefs[7, idx, 2]) * ShNorm::N2_p1 * x*z;
+    color += float3(shCoefs[8, idx, 0], shCoefs[8, idx, 1], shCoefs[8, idx, 2]) * ShNorm::N2_p2 * (x2 - y2);
     if (maxDeg < 3) return color;
-    color += float3(shCoefs[9, idx, 0], shCoefs[9, idx, 1], shCoefs[9, idx, 2]) * shNormConsts[5] * y*(3*x2-y2);
-    color += float3(shCoefs[10, idx, 0], shCoefs[10, idx, 1], shCoefs[10, idx, 2]) * shNormConsts[6] * xy*z;
-    color += float3(shCoefs[11, idx, 0], shCoefs[11, idx, 1], shCoefs[11, idx, 2]) * shNormConsts[7] * y*(5*z2-1);
-    color += float3(shCoefs[12, idx, 0], shCoefs[12, idx, 1], shCoefs[12, idx, 2]) * shNormConsts[8] * (5*z2*z-3*z);
-    color += float3(shCoefs[13, idx, 0], shCoefs[13, idx, 1], shCoefs[13, idx, 2]) * shNormConsts[7] * x*(5*z2-1);
-    color += float3(shCoefs[14, idx, 0], shCoefs[14, idx, 1], shCoefs[14, idx, 2]) * shNormConsts[9] * z*(x2-y2);
-    color += float3(shCoefs[15, idx, 0], shCoefs[15, idx, 1], shCoefs[15, idx, 2]) * shNormConsts[5] * x*(x2-3*y2);
+    color += float3(shCoefs[9, idx, 0], shCoefs[9, idx, 1], shCoefs[9, idx, 2]) * ShNorm::N3_m3 * y*(3*x2-y2);
+    color += float3(shCoefs[10, idx, 0], shCoefs[10, idx, 1], shCoefs[10, idx, 2]) * ShNorm::N3_m2 * xy*z;
+    color += float3(shCoefs[11, idx, 0], shCoefs[11, idx, 1], shCoefs[11, idx, 2]) * ShNorm::N3_m1 * y*(5*z2-1);
+    color += float3(shCoefs[12, idx, 0], shCoefs[12, idx, 1], shCoefs[12, idx, 2]) * ShNorm::N3_0 * (5*z2*z-3*z);
+    color += float3(shCoefs[13, idx, 0], shCoefs[13, idx, 1], shCoefs[13, idx, 2]) * ShNorm::N3_p1 * x*(5*z2-1);
+    color += float3(shCoefs[14, idx, 0], shCoefs[14, idx, 1], shCoefs[14, idx, 2]) * ShNorm::N3_p2 * z*(x2-y2);
+    color += float3(shCoefs[15, idx, 0], shCoefs[15, idx, 1], shCoefs[15, idx, 2]) * ShNorm::N3_p3 * x*(x2-3*y2);
 
     return color;
 }
