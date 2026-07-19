@@ -1,5 +1,8 @@
 import "slangpy";
 
+static const uint TILE_SIZE = 16;
+static const uint TILE_SIZE_SQRD = TILE_SIZE * TILE_SIZE;
+
 struct Bounds {
     float2 min;
     float2 max;
@@ -9,9 +12,9 @@ struct Bounds {
         max = center + halfSize;
     }
 
-    __init(int x, int y, int tileSize) {
-        min = float2(x, y) * tileSize;
-        max = float2(x + 1, y + 1) * tileSize;
+    __init(int x, int y, int size) {
+        min = float2(x, y) * size;
+        max = float2(x + 1, y + 1) * size;
     }
 
     bool doesIntersect(Bounds oth) {
@@ -89,7 +92,7 @@ int countIntersections(float2 screenPos, float2 variances, int2 tilesXY) {
     int intersectionNum = 0;
     for (int j = 0; j < tilesXY.y; j++) {
         for (int i = 0; i < tilesXY.x; i++) {
-            let tileBounds = Bounds(i, j, 16); // MAGIC NUMBER ALERT
+            let tileBounds = Bounds(i, j, TILE_SIZE);
             if (gaussianBounds.doesIntersect(tileBounds)) intersectionNum++;
         }
     }
@@ -261,7 +264,7 @@ void createGaussianInstances(
     int currInstance = 0;
     for (int j = 0; j < tilesXY.y; j++) {
         for (int i = 0; i < tilesXY.x; i++) {
-            let tileBounds = Bounds(i, j, 16);  // MAGIC NUMBER ALERT
+            let tileBounds = Bounds(i, j, TILE_SIZE);
             if (!gaussianBounds.doesIntersect(tileBounds)) continue;
             keys[offset + currInstance] = createKey(getTileId(i, j, tilesXY), depth);
             currInstance++;
