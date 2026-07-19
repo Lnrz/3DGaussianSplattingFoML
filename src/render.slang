@@ -73,12 +73,14 @@ float2x3 getProjectionApproximation(float3 cameraPos, float2 focals) {
 
 float2x2 compute2dCovariance(float3 scale, float4 quaternion, float3x3 viewTransform, float2x3 projApprox) {
     let rotationMat = quaternionToMatrix(normalize(quaternion));
-    let scaleMat = float3x3(
-        scale.x, 0., 0.,
-        0., scale.y, 0.,
-        0., 0., scale.z
+    let scaleMatSqrd = float3x3(
+        scale.x * scale.x, 0., 0.,
+        0., scale.y * scale.y, 0.,
+        0., 0., scale.z * scale.z
     );
-    return mul(projApprox, mul(viewTransform * rotationMat * scaleMat * transpose(scaleMat) * transpose(rotationMat) * transpose(viewTransform), transpose(projApprox)));
+    let sigma = mul(rotationMat, mul(scaleMatSqrd, transpose(rotationMat)));
+    let jw = mul(projApprox, viewTransform);
+    return mul(jw, mul(sigma, transpose(jw)));
 }
 
 int countIntersections(float2 screenPos, float2 variances, int2 tilesXY) {
