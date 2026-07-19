@@ -79,9 +79,9 @@ class Gaussians3D:
         sh_properties = [f"f_dc_{i}" for i in range(3)] + [f"f_rest_{i}" for i in range(45)]
         sh_coefficients = torch.from_numpy(
             np.stack([vertices[prop] for prop in sh_properties], dtype=np.float32) # (interleaved_sh_coefficients,gaussians)
-                .reshape(16, -1, 3)                                                # (sh_coefficients,gaussians,rgb) # (sh_coefficients,rgb,gaussians)
-#                .transpose(0, 2, 1)                                                                                 # (sh_coefficients,gaussians,rgb)
-        ).to(device=device).requires_grad_(autograd)
+                .T                                                                 # (gaussians,interleaved_sh_coefficients)
+                .reshape(-1, 16, 3)                                                # (gaussians,sh_coefficients,rgb)
+        ).permute(1,0,2).contiguous().to(device=device).requires_grad_(autograd)
 
         return cls(num, means, rotations, scales, opacities, sh_coefficients, use_opacity_sigmoid, use_scale_exponential, color_offset)
 
