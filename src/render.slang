@@ -37,6 +37,7 @@ int getTileId(int x, int y, int2 tilesXY) {
     return x + y * tilesXY.x;
 }
 
+[Differentiable]
 float2 cameraToScreen(float3 cameraPos, float4 intrinsics) {
     let focalX = intrinsics.x;
     let focalY = intrinsics.y;
@@ -48,6 +49,7 @@ float2 cameraToScreen(float3 cameraPos, float4 intrinsics) {
     );
 }
 
+[Differentiable]
 float3x3 quaternionToMatrix(float4 quaternion) {
     let w = quaternion.x;
     let x = quaternion.y;
@@ -66,6 +68,7 @@ float3x3 quaternionToMatrix(float4 quaternion) {
     );
 }
 
+[Differentiable]
 float2x3 getProjectionApproximation(float3 cameraPos, float2 focals) {
     let z2 = cameraPos.z * cameraPos.z;
     return float2x3(
@@ -74,6 +77,7 @@ float2x3 getProjectionApproximation(float3 cameraPos, float2 focals) {
     );
 }
 
+[Differentiable]
 float2x2 compute2dCovariance(float3 scale, float4 quaternion, float3x3 viewTransform, float2x3 projApprox) {
     let rotationMat = quaternionToMatrix(normalize(quaternion));
     let scaleMatSqrd = float3x3(
@@ -126,7 +130,8 @@ namespace ShNorm {
     static const float N3_p3 = 0.5900435899266435;
 }
 
-float3 computeColor(float3 direction, ITensor<float, 3> shCoefs, uint idx, int maxDeg) {
+[Differentiable]
+float3 computeColor(float3 direction, IDiffTensor<float, 3> shCoefs, uint idx, int maxDeg) {
     let x = direction.x;
     let y = direction.y;
     let z = direction.z;
@@ -182,24 +187,25 @@ bool isCulled(float3 cameraPos, float3 scales, float4 halfFovSinCos, float2 near
     return false;
 }
 
+[Differentiable]
 void projectGaussians(
     uint idx,
-    ITensor<float, 2> worldPositions,
-    ITensor<float, 2> rotations,
-    ITensor<float, 2> scales,
-    ITensor<float, 3> shCoefficients,
+    IDiffTensor<float, 2> worldPositions,
+    IDiffTensor<float, 2> rotations,
+    IDiffTensor<float, 2> scales,
+    IDiffTensor<float, 3> shCoefficients,
     int2 tilesXY,
-    float4 intrinsics,
-    float4 halfFovSinCos,
-    float3x4 extrinsics,
-    float2 nearFar,
+    no_diff float4 intrinsics,
+    no_diff float4 halfFovSinCos,
+    no_diff float3x4 extrinsics,
+    no_diff float2 nearFar,
     bool useExp,
-    float colorBias,
+    no_diff float colorBias,
     int maxShDegree,
-    IWTensor<float, 2> screenPositions,
+    IWDiffTensor<float, 2> screenPositions,
     IWTensor<float, 1> depths,
-    IWTensor<float, 2> covariances,
-    IWTensor<float, 2> colors,
+    IWDiffTensor<float, 2> covariances,
+    IWDiffTensor<float, 2> colors,
     IWTensor<int, 1> counts)
 {
     if (idx >= worldPositions.shape[0]) return;
@@ -222,7 +228,7 @@ void projectGaussians(
         return;
     }
     
-    let direction = normalize(getCameraCenter(extrinsics) - worldPos);
+    let direction = normalize(no_diff(getCameraCenter(extrinsics)) - worldPos);
     let color = computeColor(direction, shCoefficients, idx, maxShDegree) + colorBias;
     screenPositions[idx, 0] = screenPos.x;
     screenPositions[idx, 1] = screenPos.y;
@@ -303,18 +309,265 @@ void findTileRanges(uint idx, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges)
     ranges[tileId, 0] = idx;
 }
 
+struct Gaussians2D {
+    float meanXs[TILE_SIZE_SQRD];
+    float meanYs[TILE_SIZE_SQRD];
+    float varXs[TILE_SIZE_SQRD];
+    float varYs[TILE_SIZE_SQRD];
+    float covars[TILE_SIZE_SQRD];
+    float reds[TILE_SIZE_SQRD];
+    float greens[TILE_SIZE_SQRD];
+    float blues[TILE_SIZE_SQRD];
+    float opacities[TILE_SIZE_SQRD];
+}
+
+groupshared Gaussians2D sharedGaussians;
+groupshared Atomic<uint> finishedThreadNum;
+
+uint2 getPixelCoords(uint localThreadId, uint tileId, int tilesAlongX) {
+    let tileX = tileId % tilesAlongX;
+    let tileY = tileId / tilesAlongX;
+    let localPixelX = localThreadId % TILE_SIZE;
+    let localPixelY = localThreadId / TILE_SIZE;
+    return uint2(tileX * TILE_SIZE + localPixelX, tileY * TILE_SIZE + localPixelY);
+}
+
+T sigmoid<T>(T x) where T: __BuiltinFloatingPointType {
+    return T(1.) / (T(1.) + exp(-x));
+}
+
+void loadGaussianIntoSharedMemory(int gaussianIdx, int storeIdx, IDiffTensor<float, 2> means, IDiffTensor<float, 2> covariances, IDiffTensor<float, 2> colors, IDiffTensor<float, 1> opacities) {
+    let gaussianMean = float2(means[gaussianIdx, 0], means[gaussianIdx, 1]);
+    let gaussianCovariance = float3(covariances[gaussianIdx, 0], covariances[gaussianIdx, 1], covariances[gaussianIdx, 2]);
+    let gaussianColor = float3(colors[gaussianIdx, 0], colors[gaussianIdx, 1], colors[gaussianIdx, 2]);
+    
+    sharedGaussians.meanXs[storeIdx] = gaussianMean.x;
+    sharedGaussians.meanYs[storeIdx] = gaussianMean.y;
+    sharedGaussians.varXs[storeIdx] = gaussianCovariance.x;
+    sharedGaussians.varYs[storeIdx] = gaussianCovariance.y;
+    sharedGaussians.covars[storeIdx] = gaussianCovariance.z;
+    sharedGaussians.reds[storeIdx] = gaussianColor.x;
+    sharedGaussians.greens[storeIdx] = gaussianColor.y;
+    sharedGaussians.blues[storeIdx] = gaussianColor.z;
+    sharedGaussians.opacities[storeIdx] = opacities[gaussianIdx];
+}
+
+float computeGaussianAlpha(int sharedGaussianIdx, float2 pixelCenter, bool useSig) {
+    let mean = float2(sharedGaussians.meanXs[sharedGaussianIdx], sharedGaussians.meanYs[sharedGaussianIdx]);
+    let delta = pixelCenter - mean;
+
+    let a = sharedGaussians.varXs[sharedGaussianIdx];
+    let b = sharedGaussians.varYs[sharedGaussianIdx];
+    let c = sharedGaussians.covars[sharedGaussianIdx];
+    let invCovariance = float2x2(b, -c, -c, a) / (a * b - c * c);
+    
+    let storedOpacity = sharedGaussians.opacities[sharedGaussianIdx];
+    let opacity = useSig ? sigmoid(storedOpacity) : storedOpacity;
+
+    return opacity * exp(-.5 * dot(delta, mul(invCovariance, delta)));
+}
+
+// IMPORTANT slangpy always uses 1d indices for the threads, even when specifying a 2D grid
+[BackwardDerivative(renderGaussiansBwd)]
 void renderGaussians(
-    uint2 idx,
-    ITensor<int, 1> indices,
-    ITensor<int, 1> tileRanges,
-    ITensor<float, 2> means,
-    ITensor<float, 2> covariances,
-    ITensor<float, 2> colors,
-    ITensor<float, 1> opacities,
+    uint2, uint threadId,
+    int2 tilesXY,
+    ITensor<int, 1> instances,
+    ITensor<int, 2> tileRanges,
+    DiffTensor<float, 2> means,
+    DiffTensor<float, 2> covariances,
+    DiffTensor<float, 2> colors,
+    DiffTensor<float, 1> opacities,
+    bool useSig,
+    no_diff float alphaThres,
+    no_diff float maxAlpha,
+    no_diff float minTransmittance,
+    bool saveBackpropData,
+    WDiffTensor<float, 3> image,
+    IRWTensor<float, 2> accumulatedTransmittances,
+    IRWTensor<int, 2> processedGaussianCount)
+{
+    let workgroupSize = WorkgroupSize().x;
+    let tileId = threadId / workgroupSize; // here we assume that each tile is mapped to a workgroup
+    let localThreadId = threadId % workgroupSize;
+    let pixelCoords = getPixelCoords(localThreadId, tileId, tilesXY.x);
+    let pixelCenter = pixelCoords + .5;
+    let isValidPixel = (pixelCoords.x < image.shape[1]) && (pixelCoords.y < image.shape[0]); // IMPORTANT the image tensor shape should be (H,W,C) NOT (C,H,W)
+    let tileRange = int2(tileRanges[tileId, 0], tileRanges[tileId, 1]);
+    let maxGaussians = tileRange.y - tileRange.x;
+    
+    var color = float3(.0);
+    var transmittance = 1.;
+    var processedGaussianNum = 0;
+    if (maxGaussians > 0) { // if no gaussians were assigned to this tile/workgroup, can safely skip the alpha blending and synchronization processes
+        if (localThreadId == 0) finishedThreadNum.store(0);
+        GroupMemoryBarrierWithGroupSync();
+        if (!isValidPixel) finishedThreadNum.increment();
+
+        let storeIdx = localThreadId;
+        var loadIdx = tileRange.x + localThreadId;
+        var hasFinished = !isValidPixel;
+        do {
+            if (loadIdx < tileRange.y) {
+                loadGaussianIntoSharedMemory(instances[loadIdx], storeIdx, means, covariances, colors, opacities);
+            }
+            GroupMemoryBarrierWithGroupSync();
+
+            if (!hasFinished) {
+                for (int i = 0; i < workgroupSize; i++, processedGaussianNum++) {
+                    if (processedGaussianNum == maxGaussians) {
+                        hasFinished = true;
+                        finishedThreadNum.increment();
+                        break;
+                    }
+                    let alpha = min(computeGaussianAlpha(i, pixelCenter, useSig), maxAlpha);
+                    if (alpha <= alphaThres) continue;
+
+                    let nextTransmittance = transmittance * (1 - alpha);
+                    if (nextTransmittance <= minTransmittance) {
+                        hasFinished = true;
+                        finishedThreadNum.increment();
+                        break;
+                    }
+                    let gaussianColor = float3(sharedGaussians.reds[i], sharedGaussians.greens[i], sharedGaussians.blues[i]);
+                    color += gaussianColor * alpha * transmittance;
+                    transmittance = nextTransmittance;
+                }
+            }
+            loadIdx += workgroupSize;
+
+            GroupMemoryBarrierWithGroupSync();
+        } while (finishedThreadNum.load() != workgroupSize);
+    }
+
+    if (!isValidPixel) return;
+    image[pixelCoords.y, pixelCoords.x, 0] = color.x;
+    image[pixelCoords.y, pixelCoords.x, 1] = color.y;
+    image[pixelCoords.y, pixelCoords.x, 2] = color.z;
+    if (!saveBackpropData) return;
+    accumulatedTransmittances[pixelCoords.y, pixelCoords.x] = transmittance;
+    processedGaussianCount[pixelCoords.y, pixelCoords.x] = processedGaussianNum;
+}
+
+groupshared Atomic<int> sharedBlockMaxGaussians;
+
+int getBlockMaxGaussians(uint localThreadId, int threadMaxGaussians) {
+    if (localThreadId == 0) sharedBlockMaxGaussians.store(0);
+    GroupMemoryBarrierWithGroupSync();
+
+    let waveMaxGaussians = WaveActiveMax(threadMaxGaussians);
+    if (WaveIsFirstLane()) sharedBlockMaxGaussians.reduceMax(waveMaxGaussians);
+    GroupMemoryBarrierWithGroupSync();
+
+    return sharedBlockMaxGaussians.load();
+}
+
+void renderGaussiansBwd(
+    uint2, uint threadId,
+    int2 tilesXY,
+    ITensor<int, 1> instances,
+    ITensor<int, 2> tileRanges,
+    DiffTensor<float, 2> means,
+    DiffTensor<float, 2> covariances,
+    DiffTensor<float, 2> colors,
+    DiffTensor<float, 1> opacities,
+    bool useSig,
     float alphaThres,
-    float minTransmittance,
-    bool saveFinalTransmittances,
-    IWTensor<float, 3> image,
-    IWTensor<float, 2> finalTransmittances) {
-    return;
+    float maxAlpha,
+    float, bool,
+    WDiffTensor<float, 3> image,
+    IRWTensor<float, 2> accumulatedTransmittances,
+    IRWTensor<int, 2> processedGaussianCount)
+{
+    let workgroupSize = WorkgroupSize().x;
+    let tileId = threadId / workgroupSize;
+    let localThreadId = threadId % workgroupSize;
+    let pixelCoords = getPixelCoords(localThreadId, tileId, tilesXY.x);
+    let pixelCenter = pixelCoords + .5;
+    let isValidPixel = (pixelCoords.x < image.shape[1]) && (pixelCoords.y < image.shape[0]);
+    let tileRange = int2(tileRanges[tileId, 0], tileRanges[tileId, 1]);
+    if (tileRange.y <= tileRange.x) return; // no gaussians assigned were assigned to the tile/block, can return
+
+    let threadMaxGaussians = isValidPixel ? processedGaussianCount[pixelCoords.y, pixelCoords.x] : 0;
+    let blockMaxGaussians = getBlockMaxGaussians(localThreadId, threadMaxGaussians);
+    if (blockMaxGaussians <= 0) return; // no thread in the tile/block has processed any gaussians, can return
+    
+    var loadIdx = tileRange.x + blockMaxGaussians - 1 - localThreadId;
+    let storeIdx = localThreadId;
+    var batchMaxGaussianInstance = tileRange.x + blockMaxGaussians - 1;
+    var batchMinGaussianInstance = batchMaxGaussianInstance - workgroupSize + 1;
+    let threadMaxGaussianInstance = tileRange.x + threadMaxGaussians - 1;
+    var currGaussianInstance = threadMaxGaussianInstance;
+    // xGrad is to be thought as the derivate of the loss wrt x
+    let pixelGrad = !isValidPixel ? float3(0.) : float3(
+        image._grad_in[pixelCoords.y, pixelCoords.x, 0],
+        image._grad_in[pixelCoords.y, pixelCoords.x, 1],
+        image._grad_in[pixelCoords.y, pixelCoords.x, 2]
+    );
+    float accumTransm = isValidPixel ? accumulatedTransmittances[pixelCoords.y, pixelCoords.x] : 1.;
+    var backSum = float3(.0);
+    while (batchMaxGaussianInstance >= tileRange.x) {
+        if (loadIdx >= tileRange.x) {
+            loadGaussianIntoSharedMemory(instances[loadIdx], storeIdx, means, covariances, colors, opacities);
+        }
+        GroupMemoryBarrierWithGroupSync();
+
+        if (isValidPixel && batchMinGaussianInstance <= threadMaxGaussianInstance) {
+            for (int i = max(0, batchMaxGaussianInstance - currGaussianInstance);
+                i < workgroupSize && currGaussianInstance >= tileRange.x;
+                i++, currGaussianInstance--)
+            {
+                let mean = float2(sharedGaussians.meanXs[i], sharedGaussians.meanYs[i]);
+                let a = sharedGaussians.varXs[i];
+                let b = sharedGaussians.varYs[i];
+                let c = sharedGaussians.covars[i];
+                let invSigma = float2x2(b, -c, -c, a) / (a * b - c * c);
+                let storedOpacity = sharedGaussians.opacities[i];
+                let opacity = useSig ? sigmoid(storedOpacity) : storedOpacity;
+                
+                let delta = mean - pixelCenter;
+                let invSigmaDelta = mul(invSigma, delta);
+                let eSig = exp(-.5 * dot(delta, invSigmaDelta));
+                let alpha = min(opacity * eSig, maxAlpha);
+                if (alpha <= alphaThres) continue;
+                
+                accumTransm /= (1. - alpha);
+                let dPixeldColor = float3(alpha * accumTransm);
+                let color = float3(sharedGaussians.reds[i], sharedGaussians.greens[i], sharedGaussians.blues[i]);
+                let dPixeldAlpha = color * accumTransm - backSum / (1 - alpha);
+                let dAlphadOpacity = eSig;
+                let dAlphadSig = -alpha;
+                let dSigdMean = invSigmaDelta;
+                let dSigdSigma = -.5 * float3(
+                    invSigmaDelta.x * invSigmaDelta.x,
+                    invSigmaDelta.y * invSigmaDelta.y,
+                    2 * invSigmaDelta.x * invSigmaDelta.y
+                );
+                
+                let colorGrad = dPixeldColor * pixelGrad;
+                let alphaGrad = dot(dPixeldAlpha, pixelGrad);
+                let opacityGrad = dAlphadOpacity * alphaGrad;
+                let sigGrad = dAlphadSig * alphaGrad;
+                let meanGrad = dSigdMean * sigGrad;
+                let sigmaGrad = dSigdSigma * sigGrad;
+                
+                let gaussianIdx = instances[currGaussianInstance];
+                means._grad_out[gaussianIdx, 0] += meanGrad.x;
+                means._grad_out[gaussianIdx, 1] += meanGrad.y;
+                covariances._grad_out[gaussianIdx, 0] += sigmaGrad.x;
+                covariances._grad_out[gaussianIdx, 1] += sigmaGrad.y;
+                covariances._grad_out[gaussianIdx, 2] += sigmaGrad.z;
+                colors._grad_out[gaussianIdx, 0] += colorGrad.x;
+                colors._grad_out[gaussianIdx, 1] += colorGrad.y;
+                colors._grad_out[gaussianIdx, 2] += colorGrad.z;
+                opacities._grad_out[gaussianIdx] += opacityGrad;
+                
+                backSum += color * alpha * accumTransm;
+            }
+        }
+
+        batchMaxGaussianInstance -= workgroupSize;
+        batchMinGaussianInstance -= workgroupSize;
+        loadIdx -= workgroupSize;
+    }
 }
