@@ -12,7 +12,6 @@ from pathlib import Path
 
 STARTING_OPACITY = -2.19722457734   # logit for 10% initial opacity
 N0 = 0.28209479177387814          # normalizing constant of the spherical harmonic Y_0^0
-TILE_SIZE = 16
 
 
 def to_zero_deg_sh_coef(value, scale=1/255, offset=-.5):
@@ -36,7 +35,7 @@ class Gaussians3D:
 
     use_opacity_sigmoid: bool
     use_scale_exponential: bool
-    color_offset: float
+    color_bias: float
 
     @classmethod
     def from_colmap(cls, path: str, workers: int=1, device=None, autograd: bool=False):
@@ -67,7 +66,7 @@ class Gaussians3D:
         return cls(num_points, means, rotations, scales, opacities, sh_coefficients, True, True, 0.5)
     
     @classmethod
-    def from_ply(cls, path: str, use_opacity_sigmoid: bool=True, use_scale_exponential: bool=True, color_offset: float=0.5, device=None, autograd: bool=False):
+    def from_ply(cls, path: str, use_opacity_sigmoid: bool=True, use_scale_exponential: bool=True, color_bias: float=0.5, device=None, autograd: bool=False):
         model = PlyData.read(path)
         vertices = model["vertex"]
         
@@ -83,7 +82,7 @@ class Gaussians3D:
                 .reshape(-1, 16, 3)                                                # (gaussians,sh_coefficients,rgb)
         ).permute(1,0,2).contiguous().to(device=device).requires_grad_(autograd)
 
-        return cls(num, means, rotations, scales, opacities, sh_coefficients, use_opacity_sigmoid, use_scale_exponential, color_offset)
+        return cls(num, means, rotations, scales, opacities, sh_coefficients, use_opacity_sigmoid, use_scale_exponential, color_bias)
 
     def to_device(self, device):
         self.means = self.means.to(device)
@@ -111,7 +110,7 @@ class ProjectedGaussians:
         means = torch.empty([size, 2], dtype=torch.float32, device=device)
         depths = torch.empty(size, dtype=torch.float32, device=device)
         covariances = torch.empty([size, 3], dtype=torch.float32, device=device)
-        colors = torch.empty([size, 3], dtype=torch.float32, device=device)
+        colors = torch.empty_like(covariances)
 
         return cls(means, depths, covariances, colors)
 
@@ -123,7 +122,7 @@ class ProjectedGaussians:
         self.means = torch.empty([size, 2], dtype=torch.float32, device=device)
         self.depths = torch.empty(size, dtype=torch.float32, device=device)
         self.covariances = torch.empty([size, 3], dtype=torch.float32, device=device)
-        self.colors = torch.empty([size, 3], dtype=torch.float32, device=device)
+        self.colors = torch.empty_like(self.covariances)
 
     def to_device(self, device):
         self.means = self.means.to(device)
@@ -133,22 +132,30 @@ class ProjectedGaussians:
 
 @dataclass
 class GaussiansInstances:
+    num: int
+    size: int
+
     counts: torch.Tensor
     offsets: torch.Tensor
 
-    indices: torch.Tensor
+    instances: torch.Tensor
     keys: torch.Tensor
     
     sorted_keys: torch.Tensor
     sorted_keys_indices: torch.Tensor
-    sorted_indices: torch.Tensor
+    sorted_instances: torch.Tensor
 
     @classmethod
     def from_size(cls, size: int, device=None):
         counts = torch.empty(size, dtype=torch.int32, device=device)
-        offsets = torch.empty(size, dtype=torch.int32, device=device)
-        
-        return cls(counts, offsets, None, None, None, None)
+        offsets = torch.empty_like(counts)
+        instances = torch.empty(1, dtype=torch.int32, device=device)
+        sorted_instances = torch.empty_like(instances)
+        keys = torch.empty_like(instances, dtype=torch.int64)
+        sorted_keys = torch.empty_like(keys)
+        sorted_keys_indices = torch.empty_like(keys)
+
+        return cls(0, 1, counts, offsets, instances, keys, sorted_keys, sorted_keys_indices, sorted_instances)
 
     # might leave tensors longer than needed
     def ensure_capacity(self, size: int):
@@ -156,23 +163,24 @@ class GaussiansInstances:
             return
         device = self.counts.device
         self.counts = torch.empty(size, dtype=torch.int32, device=device)
-        self.offsets = torch.empty(size, dtype=torch.int32, device=device)
+        self.offsets = torch.empty_like(self.counts)
 
     # might leave tensors longer than needed
     def allocate_instances(self):
         size = (self.offsets[-1] + self.counts[-1]).item()
-        if (self.indices is None) or (self.indices.size(0) < size):
-            device = self.offsets.device
-            self.indices = torch.empty(size, dtype=torch.int32, device=device)
-            self.sorted_indices = torch.empty(size, dtype=torch.int32, device=device)
-            self.keys = torch.empty(size, dtype=torch.int64, device=device)
-            self.sorted_keys = torch.empty(size, dtype=torch.int64, device=device)
-            self.sorted_keys_indices = torch.empty(size, dtype=torch.int64, device=device)
+        self.num = size
+        if (self.size < size):
+            self.size = size
+            self.instances = torch.empty(size, dtype=torch.int32, device=self.counts.device)
+            self.sorted_instances = torch.empty_like(self.instances)
+            self.keys = torch.empty_like(self.instances, dtype=torch.int64)
+            self.sorted_keys = torch.empty_like(self.keys)
+            self.sorted_keys_indices = torch.empty_like(self.keys)
 
     def to_device(self, device):
         self.counts = self.counts.to(device)
         self.offsets = self.offsets.to(device)
-        self.indices = self.indices.to(device)
+        self.instances = self.instances.to(device)
         self.keys = self.keys.to(device)
 
 @dataclass
@@ -181,34 +189,28 @@ class ScreenTiles:
     ranges: torch.Tensor
 
     @staticmethod
-    def screensize_to_tiles(screensize):
-        tiles_x = (screensize[0] + TILE_SIZE - 1) // TILE_SIZE
-        tiles_y = (screensize[1] + TILE_SIZE - 1) // TILE_SIZE
+    def screensize_to_tiles(screensize, tile_size: int, device=None):
+        tiles_x = (screensize[0] + tile_size - 1) // tile_size
+        tiles_y = (screensize[1] + tile_size - 1) // tile_size
         
-        return torch.tensor([tiles_x, tiles_y], dtype=torch.int32), tiles_x * tiles_y
+        return torch.tensor([tiles_x, tiles_y], dtype=torch.int32, device=device), tiles_x * tiles_y
     
     # screensize is (width,height)
     @classmethod
-    def from_screensize(cls, screensize, device=None):
-        tiles_xy, tile_num = cls.screensize_to_tiles(screensize)
-        ranges = torch.empty([tile_num, 2], dtype=torch.int32, device=device)
+    def from_screensize(cls, screensize, tile_size: int, device=None):
+        tiles_xy, tile_num = cls.screensize_to_tiles(screensize, tile_size, device)
+        ranges = torch.zeros([tile_num, 2], dtype=torch.int32, device=device)
         
         return cls(tiles_xy, ranges)
 
     # might leave tensors longer than needed
-    def ensure_capacity(self, screensize):
-        tiles_xy, tile_num = self.screensize_to_tiles(screensize)
+    def ensure_capacity(self, screensize, tile_size: int):
+        tiles_xy, tile_num = self.screensize_to_tiles(screensize, tile_size, self.tiles_xy.device)
+
         if not self.tiles_xy.equal(tiles_xy):
             self.tiles_xy = tiles_xy
-        if self.ranges.size(0) < 2 * tile_num:
-            self.ranges = torch.empty([tile_num, 2], dtype=torch.int32, device=self.ranges.device)
-
-@dataclass
-class Camera:
-    screensize: torch.Tensor 
-    intrinsics: torch.Tensor
-    half_fov_sin_cos: torch.Tensor
-    extrinsics: torch.Tensor
+        if self.ranges.size(0) < tile_num:
+            self.ranges = torch.zeros([tile_num, 2], dtype=torch.int32, device=self.ranges.device)
 
 class CalibratedImages(Dataset):
 
