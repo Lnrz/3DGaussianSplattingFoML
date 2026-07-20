@@ -1,6 +1,6 @@
 import "slangpy";
 
-static const uint TILE_SIZE = 16;
+extern static const uint TILE_SIZE = 16;
 static const uint TILE_SIZE_SQRD = TILE_SIZE * TILE_SIZE;
 
 struct Bounds {
