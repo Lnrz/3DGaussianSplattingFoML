@@ -38,7 +38,7 @@ class Gaussians3D:
     color_bias: float
 
     @classmethod
-    def from_colmap(cls, path: str, workers: int=1, device=None, autograd: bool=False):
+    def from_colmap(cls, path: str, workers: int=1, device="cuda", autograd: bool=False):
         rec = pycolmap.Reconstruction(path)
         num_points = rec.num_points3D()
         
@@ -66,7 +66,7 @@ class Gaussians3D:
         return cls(num_points, means, rotations, scales, opacities, sh_coefficients, True, True, 0.5)
     
     @classmethod
-    def from_ply(cls, path: str, use_opacity_sigmoid: bool=True, use_scale_exponential: bool=True, color_bias: float=0.5, device=None, autograd: bool=False):
+    def from_ply(cls, path: str, use_opacity_sigmoid: bool=True, use_scale_exponential: bool=True, color_bias: float=0.5, device="cuda", autograd: bool=False):
         model = PlyData.read(path)
         vertices = model["vertex"]
         
@@ -106,7 +106,7 @@ class ProjectedGaussians:
     colors: torch.Tensor
 
     @classmethod
-    def from_size(cls, size: int, device=None):
+    def from_size(cls, size: int, device="cuda"):
         means = torch.empty([size, 2], dtype=torch.float32, device=device)
         depths = torch.empty(size, dtype=torch.float32, device=device)
         covariances = torch.empty([size, 3], dtype=torch.float32, device=device)
@@ -146,7 +146,7 @@ class GaussiansInstances:
     sorted_instances: torch.Tensor
 
     @classmethod
-    def from_size(cls, size: int, device=None):
+    def from_size(cls, size: int, device="cuda"):
         counts = torch.empty(size, dtype=torch.int32, device=device)
         offsets = torch.empty_like(counts)
         instances = torch.empty(1, dtype=torch.int32, device=device)
@@ -189,7 +189,7 @@ class ScreenTiles:
     ranges: torch.Tensor
 
     @staticmethod
-    def screensize_to_tiles(screensize, tile_size: int, device=None):
+    def screensize_to_tiles(screensize, tile_size: int, device="cuda"):
         tiles_x = (screensize[0] + tile_size - 1) // tile_size
         tiles_y = (screensize[1] + tile_size - 1) // tile_size
         
@@ -197,7 +197,7 @@ class ScreenTiles:
     
     # screensize is (width,height)
     @classmethod
-    def from_screensize(cls, screensize, tile_size: int, device=None):
+    def from_screensize(cls, screensize, tile_size: int, device="cuda"):
         tiles_xy, tile_num = cls.screensize_to_tiles(screensize, tile_size, device)
         ranges = torch.zeros([tile_num, 2], dtype=torch.int32, device=device)
         
