@@ -185,11 +185,12 @@ class GaussiansInstances:
 
 @dataclass
 class ScreenTiles:
+    tiles_xy_cpu: torch.Tensor
     tiles_xy: torch.Tensor
     ranges: torch.Tensor
 
     @staticmethod
-    def screensize_to_tiles(screensize, tile_size: int, device="cuda"):
+    def screensize_to_tiles(screensize, tile_size: int, device="cpu"):
         tiles_x = (screensize[0] + tile_size - 1) // tile_size
         tiles_y = (screensize[1] + tile_size - 1) // tile_size
         
@@ -198,17 +199,19 @@ class ScreenTiles:
     # screensize is (width,height)
     @classmethod
     def from_screensize(cls, screensize, tile_size: int, device="cuda"):
-        tiles_xy, tile_num = cls.screensize_to_tiles(screensize, tile_size, device)
+        tiles_xy_cpu, tile_num = cls.screensize_to_tiles(screensize, tile_size, "cpu")
+        tiles_xy = tiles_xy_cpu.to(device=device)
         ranges = torch.zeros([tile_num, 2], dtype=torch.int32, device=device)
         
-        return cls(tiles_xy, ranges)
+        return cls(tiles_xy_cpu, tiles_xy, ranges)
 
     # might leave tensors longer than needed
     def ensure_capacity(self, screensize, tile_size: int):
-        tiles_xy, tile_num = self.screensize_to_tiles(screensize, tile_size, self.tiles_xy.device)
+        new_tiles_xy, tile_num = self.screensize_to_tiles(screensize, tile_size, "cpu")
 
-        if not self.tiles_xy.equal(tiles_xy):
-            self.tiles_xy = tiles_xy
+        if not self.tiles_xy_cpu.equal(new_tiles_xy):
+            self.tiles_xy_cpu = new_tiles_xy
+            self.tiles_xy = new_tiles_xy.to(device=self.tiles_xy.device)
         if self.ranges.size(0) < tile_num:
             self.ranges = torch.zeros([tile_num, 2], dtype=torch.int32, device=self.ranges.device)
 
