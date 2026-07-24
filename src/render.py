@@ -121,7 +121,7 @@ def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOp
     torch.cumsum(ctx.instances.counts[:gs.num], dim=0, out=ctx.instances.cumulative_counts[:gs.num])
     ctx.allocate_instances()
     if ctx.instances.num > 0:
-        ctx.create_instances_and_keys(spy.grid((ctx.instances.num,)),
+        ctx.create_instances_and_keys(spy.grid((gs.num,)), gs.num,
                                     ctx.instances.counts, ctx.instances.cumulative_counts,
                                     ctx.projections.means, ctx.projections.depths, ctx.projections.covariances,
                                     ctx.tiles.tiles_xy,
@@ -130,7 +130,7 @@ def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOp
         torch.sort(ctx.instances.keys[:ctx.instances.num], stable=True, dim=0, out=(ctx.instances.sorted_keys[:ctx.instances.num], ctx.instances.sorted_keys_indices[:ctx.instances.num]))
         torch.index_select(ctx.instances.instances[:ctx.instances.num], dim=0, index=ctx.instances.sorted_keys_indices[:ctx.instances.num], out=ctx.instances.sorted_instances[:ctx.instances.num])
         ctx.tiles.ranges[:ctx.instances.num].zero_()
-        ctx.find_tile_ranges(spy.grid((ctx.instances.num,)), ctx.instances.sorted_keys, ctx.tiles.ranges)
+        ctx.find_tile_ranges(spy.grid((ctx.instances.num,)), ctx.instances.num, ctx.instances.sorted_keys, ctx.tiles.ranges)
     
     ctx.render(spy.grid(cam.screensize), spy.thread_id(),
                ctx.tiles.tiles_xy,

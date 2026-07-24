@@ -3,34 +3,13 @@ import "slangpy";
 extern static const uint TILE_SIZE = 16;
 static const uint TILE_SIZE_SQRD = TILE_SIZE * TILE_SIZE;
 
-struct Bounds {
-    float2 min;
-    float2 max;
-
-    __init(float2 center, float2 halfSize) {
-        min = center - halfSize;
-        max = center + halfSize;
-    }
-
-    __init(int x, int y, int size) {
-        min = float2(x, y) * size;
-        max = float2(x + 1, y + 1) * size;
-    }
-
-    bool doesIntersect(Bounds oth) {
-        const bool xIntersect = (min.x <= oth.max.x) && (max.x >= oth.min.x);
-        const bool yIntersect = (min.y <= oth.max.y) && (max.y >= oth.min.y);
-        return xIntersect && yIntersect;
-    }
+// works only for positive depth (could be made to work with negative depths but they are culled)
+uint64_t createKey(int tileId, float depth) {
+    return ((uint64_t)reinterpret<uint>(tileId) << 32) | (uint64_t)reinterpret<uint>(depth);
 }
 
-// works only for positive depth (could be made to work with negative depths but we cull those)
-int64_t createKey(int tileId, float depth) {
-    return ((int64_t)tileId << 32) | (int64_t)reinterpret<int>(depth);
-}
-
-int extractTileId(int64_t key) {
-    return (uint)(key >> 32);
+uint extractTileId(int64_t key) {
+    return (uint)(reinterpret<uint64_t>(key) >> 32);
 }
 
 int getTileId(int x, int y, int2 tilesXY) {
@@ -90,18 +69,20 @@ float2x2 compute2dCovariance(float3 scale, float4 quaternion, float3x3 viewTrans
     return mul(jw, mul(sigma, transpose(jw)));
 }
 
-int countIntersections(float2 screenPos, float2 variances, int2 tilesXY) {
-    let gaussianBounds = Bounds(screenPos, 3 * sqrt(variances)); // roughly 99% confidence bounds
-    
-    int intersectionNum = 0;
-    for (int j = 0; j < tilesXY.y; j++) {
-        for (int i = 0; i < tilesXY.x; i++) {
-            let tileBounds = Bounds(i, j, TILE_SIZE);
-            if (gaussianBounds.doesIntersect(tileBounds)) intersectionNum++;
-        }
-    }
-    
-    return intersectionNum;
+bool isValidFloat<T, let n : int>(vector<T, n> x) where T : __BuiltinFloatingPointType {
+    return all(!isnan(x) && !isinf(x));
+}
+
+int countIntersections(float2 screenPos, float3 covariances, int2 tilesXY) {
+    let halfSize = 3. * sqrt(covariances.xy);
+    let minPos = screenPos - halfSize;
+    let maxPos = screenPos + halfSize;
+    let minTileCoords = max(int2(0, 0), int2(floor(minPos / TILE_SIZE)));
+    let maxTileCoords = min(tilesXY - 1, int2(floor(maxPos / TILE_SIZE)));
+    if (any(minTileCoords > maxTileCoords)) return 0;
+
+    let bboxSpan = maxTileCoords - minTileCoords + 1;
+    return bboxSpan.x * bboxSpan.y;
 }
 
 float3 getCameraCenter(float3x4 extrinsics) {
@@ -166,7 +147,7 @@ float3 computeColor(float3 direction, IDiffTensor<float, 3> shCoefs, uint idx, i
 
 // sphere-frustrum test
 bool isCulled(float3 cameraPos, float3 scales, float4 halfFovSinCos, float2 nearFar) {
-    if (cameraPos.z < nearFar.x || cameraPos.z > nearFar.y) return true;
+    if (cameraPos.z < nearFar.x || cameraPos.z > nearFar.y || !isValidFloat(cameraPos.xy)) return true;
     
     let radius = 3. * max(max(scales.x, scales.y), scales.z); // 99+% confidence bounding sphere
     
@@ -220,9 +201,20 @@ void projectGaussians(
     }
 
     let screenPos = cameraToScreen(cameraPos, intrinsics);
+    if (!isValidFloat(screenPos)) {
+        counts[idx] = 0;
+        return;
+    }
+
     let rotation = float4(rotations[idx, 0], rotations[idx, 1], rotations[idx, 2], rotations[idx, 3]);
     let covarianceMat = compute2dCovariance(scale, rotation, (float3x3)extrinsics, getProjectionApproximation(cameraPos, intrinsics.xy));
-    let intersectionNum = countIntersections(screenPos, covarianceMat._11_22, tilesXY);
+    let covariance = covarianceMat._11_22_12;
+    if (!isValidFloat(covariance)) {
+        counts[idx] = 0;
+        return;
+    }
+
+    let intersectionNum = countIntersections(screenPos, covariance, tilesXY);
     if (intersectionNum == 0) {
         counts[idx] = 0;
         return;
@@ -233,9 +225,9 @@ void projectGaussians(
     screenPositions[idx, 0] = screenPos.x;
     screenPositions[idx, 1] = screenPos.y;
     depths[idx] = cameraPos.z;
-    covariances[idx, 0] = covarianceMat._11;
-    covariances[idx, 1] = covarianceMat._22;
-    covariances[idx, 2] = covarianceMat._12;
+    covariances[idx, 0] = covariance.x;
+    covariances[idx, 1] = covariance.y;
+    covariances[idx, 2] = covariance.z;
     colors[idx, 0] = color.x;
     colors[idx, 1] = color.y;
     colors[idx, 2] = color.z;
@@ -244,8 +236,9 @@ void projectGaussians(
 
 void createGaussianInstances(
     uint idx,
+    uint gaussianCount,
     ITensor<int, 1> counts,
-    ITensor<int, 1> offsets,
+    ITensor<int, 1> cumulativeCounts,
     ITensor<float, 2> positions,
     ITensor<float, 1> depths,
     ITensor<float, 2> covariances,
@@ -253,48 +246,50 @@ void createGaussianInstances(
     IWTensor<int, 1> instances,
     IWTensor<int64_t, 1> keys)
 {
-    if (idx >= counts.shape[0]) return;
+    if (idx >= gaussianCount) return;
     let count = counts[idx];
     if (count == 0) return;
 
-    let offset = offsets[idx];
+    let offset = cumulativeCounts[idx] - count;
     for (int i = 0; i < count; i++) {
         instances[offset + i] = idx;
     }
 
     let position = float2(positions[idx, 0], positions[idx, 1]);
-    let scales = float2(covariances[idx, 0], covariances[idx, 1]);
-    let gaussianBounds = Bounds(position, 3 * sqrt(scales)); // roughly 99% confidence bounds
+    let variances = float2(covariances[idx, 0], covariances[idx, 1]);
     let depth = depths[idx];
-    
+
+    let halfSize = 3. * sqrt(variances);
+    let minPos = position - halfSize;
+    let maxPos = position + halfSize;
+    let minTileCoords = max(int2(0, 0), int2(floor(minPos / TILE_SIZE)));
+    let maxTileCoords = min(tilesXY - 1, int2(floor(maxPos / TILE_SIZE))) + 1;
+
     int currInstance = 0;
-    for (int j = 0; j < tilesXY.y; j++) {
-        for (int i = 0; i < tilesXY.x; i++) {
-            let tileBounds = Bounds(i, j, TILE_SIZE);
-            if (!gaussianBounds.doesIntersect(tileBounds)) continue;
-            keys[offset + currInstance] = createKey(getTileId(i, j, tilesXY), depth);
+    for (int j = minTileCoords.y; j < maxTileCoords.y; j++) {
+        for (int i = minTileCoords.x; i < maxTileCoords.x; i++) {
+            keys[offset + currInstance] = reinterpret<int64_t>(createKey(getTileId(i, j, tilesXY), depth));
             currInstance++;
         }
     }
 }
 
-void findTileRangesNoShuffle(uint idx, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges) {
-    let lastIdx = keys.shape[0] - 2;
+void findTileRangesNoShuffle(uint idx, uint keyCount, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges) {
+    let lastIdx = keyCount - 2;
     if (idx > lastIdx) return;
     
     let nextIdx = idx + 1;
     let prevTileId = extractTileId(keys[idx]);
     let nextTileId = extractTileId(keys[nextIdx]);
     if (idx == 0) ranges[prevTileId, 0] = 0;
-    if (idx == lastIdx) ranges[nextTileId, 1] = keys.shape[0];
+    if (idx == lastIdx) ranges[nextTileId, 1] = keyCount;
     if (prevTileId == nextTileId) return;
     ranges[prevTileId, 1] = nextIdx;
     ranges[nextTileId, 0] = nextIdx;
 }
 
-void findTileRanges(uint idx, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges) {
-    let lastIdx = keys.shape[0] - 1;
-    if (idx > lastIdx) return;
+void findTileRanges(uint idx, uint keyCount, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges) {
+    if (idx >= keyCount) return;
 
     let tileId = extractTileId(keys[idx]);
     var prevTileId = WaveReadLaneAt(tileId, WaveGetLaneIndex() - 1);
@@ -303,7 +298,7 @@ void findTileRanges(uint idx, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges)
     }
 
     if (idx == 0) ranges[tileId, 0] = 0;
-    if (idx == lastIdx) ranges[tileId, 1] = keys.shape[0];
+    if (idx == keyCount - 1) ranges[tileId, 1] = keyCount;
     if (prevTileId == tileId) return;
     ranges[prevTileId, 1] = idx;
     ranges[tileId, 0] = idx;
