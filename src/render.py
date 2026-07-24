@@ -25,7 +25,8 @@ class RenderContext:
     projections: data.ProjectedGaussians
     instances: data.GaussiansInstances
     tiles: data.ScreenTiles
-    
+    exponential_resizing: bool
+
     shader_module: spy.Module
     project: spy.Function
     create_instances_and_keys: spy.Function
@@ -40,7 +41,7 @@ class RenderContext:
     dummy_2d_int: torch.Tensor
 
     @classmethod
-    def from_settings(cls, gaussian_num: int, tile_size: int, group_size: int, slang_module: spy.Module, screensize=None, device="cuda"):
+    def from_settings(cls, gaussian_num: int, tile_size: int, group_size: int, slang_module: spy.Module, screensize=None, exponential_resizing: bool=False, device="cuda"):
         projections = data.ProjectedGaussians.from_size(gaussian_num, device)
         tiles = data.ScreenTiles.from_screensize(screensize, tile_size, device) if screensize else None
         instances = data.GaussiansInstances.from_size(gaussian_num, device=device)
@@ -48,7 +49,7 @@ class RenderContext:
         dummy_2d_float = torch.empty((1,1), dtype=torch.float32, device=device)
         dummy_2d_int = torch.empty_like(dummy_2d_float, dtype=torch.int32)
 
-        ctx = cls(projections, instances, tiles, slang_module, None, None, None, None, tile_size, group_size, device, dummy_2d_float, dummy_2d_int)
+        ctx = cls(projections, instances, tiles, exponential_resizing, slang_module, None, None, None, None, tile_size, group_size, device, dummy_2d_float, dummy_2d_int)
         ctx.__create_functions()
 
         return ctx
@@ -68,7 +69,7 @@ class RenderContext:
             self.tiles = data.ScreenTiles.from_screensize(screensize, self.tile_size, self.device)
     
     def allocate_instances(self):
-        self.instances.allocate_instances()
+        self.instances.allocate_instances(self.exponential_resizing)
 
     def __create_functions(self):
         self.project = self.shader_module.projectGaussians.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.group_size))
@@ -117,16 +118,16 @@ def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOp
                 gs.use_scale_exponential, gs.color_bias, opts.max_sh_degree,
                 ctx.projections.means, ctx.projections.depths, ctx.projections.covariances, ctx.projections.colors, ctx.instances.counts)
     
-    torch.cumsum(ctx.instances.counts[:gs.num], dim=0, out=ctx.instances.offsets[:gs.num])
+    torch.cumsum(ctx.instances.counts[:gs.num], dim=0, out=ctx.instances.cumulative_counts[:gs.num])
     ctx.allocate_instances()
     if ctx.instances.num > 0:
         ctx.create_instances_and_keys(spy.grid((ctx.instances.num,)),
-                                    ctx.instances.counts, ctx.instances.offsets,
+                                    ctx.instances.counts, ctx.instances.cumulative_counts,
                                     ctx.projections.means, ctx.projections.depths, ctx.projections.covariances,
                                     ctx.tiles.tiles_xy,
                                     ctx.instances.instances, ctx.instances.keys)
         
-        torch.sort(ctx.instances.keys[:ctx.instances.num], dim=0, out=(ctx.instances.sorted_keys[:ctx.instances.num], ctx.instances.sorted_keys_indices[:ctx.instances.num]))
+        torch.sort(ctx.instances.keys[:ctx.instances.num], stable=True, dim=0, out=(ctx.instances.sorted_keys[:ctx.instances.num], ctx.instances.sorted_keys_indices[:ctx.instances.num]))
         torch.index_select(ctx.instances.instances[:ctx.instances.num], dim=0, index=ctx.instances.sorted_keys_indices[:ctx.instances.num], out=ctx.instances.sorted_instances[:ctx.instances.num])
         ctx.tiles.ranges[:ctx.instances.num].zero_()
         ctx.find_tile_ranges(spy.grid((ctx.instances.num,)), ctx.instances.sorted_keys, ctx.tiles.ranges)

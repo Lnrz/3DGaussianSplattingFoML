@@ -136,7 +136,7 @@ class GaussiansInstances:
     size: int
 
     counts: torch.Tensor
-    offsets: torch.Tensor
+    cumulative_counts: torch.Tensor
 
     instances: torch.Tensor
     keys: torch.Tensor
@@ -163,15 +163,18 @@ class GaussiansInstances:
             return
         device = self.counts.device
         self.counts = torch.empty(size, dtype=torch.int32, device=device)
-        self.offsets = torch.empty_like(self.counts)
+        self.cumulative_counts = torch.empty_like(self.counts)
 
     # might leave tensors longer than needed
-    def allocate_instances(self):
-        size = (self.offsets[-1] + self.counts[-1]).item()
-        self.num = size
-        if (self.size < size):
-            self.size = size
-            self.instances = torch.empty(size, dtype=torch.int32, device=self.counts.device)
+    def allocate_instances(self, by_power_of_two: bool=False):
+        self.num = self.cumulative_counts[-1].item()
+        if (self.size < self.num):
+            if by_power_of_two:
+                two_exp = np.ceil(np.log2(self.num/self.size)).item()
+                self.size = int(self.size * (2 ** two_exp))
+            else:
+                self.size = self.num
+            self.instances = torch.empty(self.size, dtype=torch.int32, device=self.counts.device)
             self.sorted_instances = torch.empty_like(self.instances)
             self.keys = torch.empty_like(self.instances, dtype=torch.int64)
             self.sorted_keys = torch.empty_like(self.keys)
@@ -179,7 +182,7 @@ class GaussiansInstances:
 
     def to_device(self, device):
         self.counts = self.counts.to(device)
-        self.offsets = self.offsets.to(device)
+        self.cumulative_counts = self.cumulative_counts.to(device)
         self.instances = self.instances.to(device)
         self.keys = self.keys.to(device)
 
