@@ -34,14 +34,14 @@ class RenderContext:
     render: spy.Function
 
     tile_size: int
-    group_size: int
+    block_size: int
     device: any
 
     dummy_2d_float: torch.Tensor
     dummy_2d_int: torch.Tensor
 
     @classmethod
-    def from_settings(cls, gaussian_num: int, tile_size: int, group_size: int, slang_module: spy.Module, screensize=None, exponential_resizing: bool=False, device="cuda"):
+    def from_settings(cls, gaussian_num: int, tile_size: int, block_size: int, slang_module: spy.Module, screensize=None, exponential_resizing: bool=False, device="cuda"):
         projections = data.ProjectedGaussians.from_size(gaussian_num, device)
         tiles = data.ScreenTiles.from_screensize(screensize, tile_size, device) if screensize else None
         instances = data.GaussiansInstances.from_size(gaussian_num, device=device)
@@ -49,7 +49,7 @@ class RenderContext:
         dummy_2d_float = torch.empty((1,1), dtype=torch.float32, device=device)
         dummy_2d_int = torch.empty_like(dummy_2d_float, dtype=torch.int32)
 
-        ctx = cls(projections, instances, tiles, exponential_resizing, slang_module, None, None, None, None, tile_size, group_size, device, dummy_2d_float, dummy_2d_int)
+        ctx = cls(projections, instances, tiles, exponential_resizing, slang_module, None, None, None, None, tile_size, block_size, device, dummy_2d_float, dummy_2d_int)
         ctx.__create_functions()
 
         return ctx
@@ -72,9 +72,9 @@ class RenderContext:
         self.instances.allocate_instances(self.exponential_resizing)
 
     def __create_functions(self):
-        self.project = self.shader_module.projectGaussians.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.group_size))
-        self.create_instances_and_keys = self.shader_module.createGaussianInstances.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.group_size))
-        self.find_tile_ranges = self.shader_module.findTileRanges.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.group_size))
+        self.project = self.shader_module.projectGaussians.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.block_size))
+        self.create_instances_and_keys = self.shader_module.createGaussianInstances.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.block_size))
+        self.find_tile_ranges = self.shader_module.findTileRanges.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.block_size))
         self.render = self.shader_module.renderGaussians.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.tile_size, self.tile_size))
 
 
