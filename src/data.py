@@ -166,8 +166,8 @@ class GaussiansInstances:
         self.cumulative_counts = torch.empty_like(self.counts)
 
     # might leave tensors longer than needed
-    def allocate_instances(self, by_power_of_two: bool=False):
-        self.num = self.cumulative_counts[-1].item()
+    def allocate_instances(self, instances_num:int, by_power_of_two: bool=False):
+        self.num = instances_num
         if (self.size < self.num):
             if by_power_of_two:
                 two_exp = np.ceil(np.log2(self.num/self.size)).item()

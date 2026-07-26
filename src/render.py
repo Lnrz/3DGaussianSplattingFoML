@@ -72,8 +72,11 @@ class RenderContext:
         else:
             self.tiles = data.ScreenTiles.from_screensize(screensize, self.tile_size, self.device)
     
-    def allocate_instances(self):
-        self.instances.allocate_instances(self.exponential_resizing)
+    def allocate_instances(self, gaussian_num: int):
+        self.instances.allocate_instances(self.instances.cumulative_counts[gaussian_num-1].item(), self.exponential_resizing)
+
+    def reset_tile_ranges(self):
+        self.tiles.ranges.zero_()
 
     def __create_functions(self):
         self.project = self.shader_module.projectGaussians.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.block_size))
@@ -126,7 +129,7 @@ def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOp
                 ctx.projections.means, ctx.projections.depths, ctx.projections.covariances, ctx.projections.colors, ctx.instances.counts)
     
     torch.cumsum(ctx.instances.counts[:gs.num], dim=0, out=ctx.instances.cumulative_counts[:gs.num])
-    ctx.allocate_instances()
+    ctx.allocate_instances(gs.num)
     if ctx.instances.num > 0:
         ctx.create_instances_and_keys(spy.grid((gs.num,)), gs.num,
                                     ctx.instances.counts, ctx.instances.cumulative_counts,
@@ -136,7 +139,6 @@ def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOp
         
         torch.sort(ctx.instances.keys[:ctx.instances.num], stable=True, dim=0, out=(ctx.instances.sorted_keys[:ctx.instances.num], ctx.instances.sorted_keys_indices[:ctx.instances.num]))
         torch.index_select(ctx.instances.instances[:ctx.instances.num], dim=0, index=ctx.instances.sorted_keys_indices[:ctx.instances.num], out=ctx.instances.sorted_instances[:ctx.instances.num])
-        ctx.tiles.ranges[:ctx.instances.num].zero_()
         ctx.find_tile_ranges(spy.grid((ctx.instances.num,)), ctx.instances.num, ctx.instances.sorted_keys, ctx.tiles.ranges)
     
     ctx.render(spy.grid(cam.screensize), spy.thread_id(),
@@ -145,5 +147,8 @@ def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOp
                ctx.projections.means, ctx.projections.covariances, ctx.projections.colors, gs.opacities,
                gs.use_opacity_sigmoid, opts.alpha_thres, opts.max_alpha, opts.min_transmittance, opts.save_data_for_backprop,
                image, backprop_data[0], backprop_data[1])
+
+    if ctx.instances.num > 0:
+        ctx.reset_tile_ranges()
 
     return image if not opts.save_data_for_backprop else image, backprop_data
