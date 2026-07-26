@@ -54,10 +54,14 @@ class RenderContext:
 
         return ctx
 
-    def change_tile_size(self, tile_size: int):
-        if tile_size == self.tile_size:
+    def change_shader_size(self, tile_size: int = 0, block_size: int = 0):
+        tile_size = tile_size if tile_size > 0 else self.tile_size
+        block_size = block_size if block_size > 0 else self.block_size
+        if tile_size == self.tile_size and block_size == self.block_size:
             return
+
         self.tile_size = tile_size
+        self.block_size = block_size
         self.__create_functions()
 
     def ensure_capacity(self, gaussian_num: int, screensize):
