@@ -109,7 +109,10 @@ def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOp
     if not opts.save_data_for_backprop:
         backprop_data = (ctx.dummy_2d_float, ctx.dummy_2d_int)
     elif not isinstance(backprop_data, tuple[torch.Tensor, torch.Tensor]):
-        backprop_data = (torch.empty_like(image), torch.empty_like(image, dtype=torch.int32))
+        backprop_data = (
+            torch.empty((cam.screensize[1], cam.screensize[0]), dtype=torch.float32, device=ctx.device),
+            torch.empty((cam.screensize[1], cam.screensize[0]), dtype=torch.int32, device=ctx.device)
+        )
     ctx.ensure_capacity(gs.num, cam.screensize)
 
     ctx.project(spy.grid((gs.num,)),
