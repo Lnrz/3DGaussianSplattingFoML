@@ -147,7 +147,7 @@ float3 computeColor(float3 direction, IDiffTensor<float, 3> shCoefs, uint idx, i
 
 // sphere-frustrum test
 bool isCulled(float3 cameraPos, float3 scales, float4 halfFovSinCos, float2 nearFar) {
-    if (cameraPos.z < nearFar.x || cameraPos.z > nearFar.y || !isValidFloat(cameraPos.xy)) return true;
+    if (cameraPos.z < nearFar.x || cameraPos.z > nearFar.y || !isValidFloat(cameraPos)) return true;
     
     let radius = 3. * max(max(scales.x, scales.y), scales.z); // 99+% confidence bounding sphere
     
@@ -181,6 +181,7 @@ void projectGaussians(
     no_diff float3x4 extrinsics,
     no_diff float2 nearFar,
     bool useExp,
+    no_diff float detThres,
     no_diff float colorBias,
     int maxShDegree,
     IWDiffTensor<float, 2> screenPositions,
@@ -209,7 +210,8 @@ void projectGaussians(
     let rotation = float4(rotations[idx, 0], rotations[idx, 1], rotations[idx, 2], rotations[idx, 3]);
     let covarianceMat = compute2dCovariance(scale, rotation, (float3x3)extrinsics, getProjectionApproximation(cameraPos, intrinsics.xy));
     let covariance = covarianceMat._11_22_12;
-    if (!isValidFloat(covariance)) {
+    let covDet = covariance.x * covariance.y - covariance.z * covariance.z;
+    if (!isValidFloat(covariance) || covDet < detThres) {
         counts[idx] = 0;
         return;
     }
@@ -481,7 +483,7 @@ void renderGaussiansBwd(
     let pixelCenter = pixelCoords + .5;
     let isValidPixel = (pixelCoords.x < image.shape[1]) && (pixelCoords.y < image.shape[0]);
     let tileRange = int2(tileRanges[tileId, 0], tileRanges[tileId, 1]);
-    if (tileRange.y <= tileRange.x) return; // no gaussians assigned were assigned to the tile/block, can return
+    if (tileRange.y <= tileRange.x) return; // no gaussians were assigned to the tile/block, can return
 
     let threadMaxGaussians = isValidPixel ? processedGaussianCount[pixelCoords.y, pixelCoords.x] : 0;
     let blockMaxGaussians = getBlockMaxGaussians(localThreadId, threadMaxGaussians);
