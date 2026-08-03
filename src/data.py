@@ -75,13 +75,12 @@ class Gaussians3D:
         rotations = torch.from_numpy(np.column_stack((vertices["rot_0"], vertices["rot_1"], vertices["rot_2"], vertices["rot_3"])).astype(np.float32)).to(device=device).requires_grad_(autograd)
         scales = torch.from_numpy(np.column_stack((vertices["scale_0"], vertices["scale_1"], vertices["scale_2"])).astype(np.float32)).to(device=device).requires_grad_(autograd)
         opacities = torch.from_numpy(vertices["opacity"].astype(np.float32)).to(device=device).requires_grad_(autograd)
-        sh_properties = [f"f_dc_{i}" for i in range(3)] + [f"f_rest_{i}" for i in range(45)]
-        sh_coefficients = torch.from_numpy(
-            np.stack([vertices[prop] for prop in sh_properties], dtype=np.float32) # (interleaved_sh_coefficients,gaussians)
-                .T                                                                 # (gaussians,interleaved_sh_coefficients)
-                .reshape(-1, 16, 3)                                                # (gaussians,sh_coefficients,rgb)
-        ).permute(1,0,2).contiguous().to(device=device).requires_grad_(autograd)
-
+        dc_properties = [f"f_dc_{i}" for i in range(3)]
+        rest_properties = [f"f_rest_{i}" for i in range(45)]
+        dc = np.expand_dims(np.stack([vertices[prop] for prop in dc_properties], dtype=np.float32).T, 0)                        # (1(dc),gaussians,rgb)
+        rest = np.stack([vertices[prop] for prop in rest_properties], dtype=np.float32).T.reshape(-1, 3, 15).transpose(2, 0, 1) # (15(rest),gaussians,rgb)
+        sh_coefficients = torch.from_numpy(np.concatenate([dc, rest], axis=0)).to(device=device).requires_grad_(autograd)       # (sh_coefficients,gaussians,rgb)
+        
         return cls(num, means, rotations, scales, opacities, sh_coefficients, use_opacity_sigmoid, use_scale_exponential, color_bias)
 
     def to_device(self, device):
