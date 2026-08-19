@@ -5,7 +5,7 @@ import numpy as np
 from numpy.lib.recfunctions import unstructured_to_structured
 from scipy.spatial import KDTree
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 import torchvision.io as tv_io
 import torchvision.transforms.v2.functional as F
 import pycolmap
@@ -261,6 +261,14 @@ class CalibratedImages(Dataset):
         dataset.scene_radius = np.max(distances).item()
 
         return dataset
+
+    def split_train_test(self):
+        group_count = len(self) // 8
+        test_indices = [8 * i + 7 for i in range(group_count)]
+        test_indices_set = set(test_indices)
+        train_indices = [i for i in range(len(self)) if i not in test_indices_set]
+
+        return Subset(self, train_indices), Subset(self, test_indices)
     
     def __len__(self):
         return len(self.image_names)
