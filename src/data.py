@@ -17,11 +17,10 @@ N0 = 0.28209479177387814          # normalizing constant of the spherical harmon
 def to_zero_deg_sh_coef(value, scale=1/255, offset=-.5):
     return (value*scale + offset) / N0
 
-def half_fov_sin_cos_from_colmap_camera(camera):
-    half_fov_x = np.atan(camera.width / (2. * camera.focal_length_x))
-    half_fov_y = np.atan(camera.height / (2. * camera.focal_length_y))
+def half_fov_sin_cos(width: int, height: int, focal_length_x: float, focal_length_y: float):
+    half_fov_x = np.atan(width / (2. * focal_length_x))
+    half_fov_y = np.atan(height / (2. * focal_length_y))
     return np.array([np.sin(half_fov_x), np.cos(half_fov_x), np.sin(half_fov_y), np.cos(half_fov_y)], dtype=np.float32)
-
 
 @dataclass
 class Gaussians3D:
@@ -242,27 +241,37 @@ class CalibratedImages(Dataset):
     def from_colmap(cls, path: str, images_dir: str, transform=None):
         dataset = cls()
         rec = pycolmap.Reconstruction(path)
+        images = rec.images.values()
+        cameras = list(rec.cameras.values())
 
         dataset.images_dir = images_dir
         dataset.transform = transform
-        dataset.images_names = [image.name for image in rec.images.values()]
-        dataset.intrinsics = torch.from_numpy(np.array([image.camera.params for image in rec.images.values()], dtype=np.float32)) # TODO: there are duplicates here (some datasets have 100s of images but just 1 camera...)
-        dataset.half_fovs_sin_cos = torch.from_numpy(np.array([half_fov_sin_cos_from_colmap_camera(image.camera) for image in rec.images.values()], dtype=np.float32)) # TODO: there are duplicates here (some datasets have 100s of images but just 1 camera...)
-        dataset.extrinsics = torch.from_numpy(np.array([image.cam_from_world().matrix() for image in rec.images.values()], dtype=np.float32))
+        dataset.image_names = [image.name for image in images]
+        dataset.img_to_cam_indices = [cameras.index(image.camera) for image in images]
+        dataset.intrinsics = torch.from_numpy(np.array([camera.params for camera in cameras], dtype=np.float32))
+        dataset.half_fovs_sin_cos = torch.from_numpy(np.array([half_fov_sin_cos(camera.width, camera.height, camera.focal_length_x, camera.focal_length_y) for camera in cameras], dtype=np.float32))
+        dataset.extrinsics = torch.from_numpy(np.array([image.cam_from_world().matrix() for image in images], dtype=np.float32))
+        dataset.max_image_size = np.max([[camera.width, camera.height] for camera in cameras], 0)
+
+        camera_centers = np.array([img.projection_center() for img in images])
+        world_center = camera_centers.mean(axis=0)
+        distances = np.linalg.vector_norm(camera_centers - world_center, axis=1)
+        dataset.scene_radius = np.max(distances).item()
 
         return dataset
     
     def __len__(self):
-        return len(self.images_names)
+        return len(self.image_names)
 
     def __getitem__(self, idx):
-        image_path = Path(self.images_dir) / self.images_names[idx]
+        image_path = Path(self.images_dir) / self.image_names[idx]
         image = tv_io.decode_image(image_path)
-        intrinsics = self.intrinsics[idx]
+        cam_idx = self.img_to_cam_indices[idx]
+        intrinsics = self.intrinsics[cam_idx]
         if self.transform:
             image, intrinsics = self.transform(image, intrinsics)
         
-        return image, intrinsics, self.half_fovs_sin_cos[idx], self.extrinsics[idx]
+        return image, intrinsics, self.half_fovs_sin_cos[cam_idx], self.extrinsics[idx]
     
 class DownsampleCalibratedImage(torch.nn.Module):
     
