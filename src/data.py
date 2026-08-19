@@ -1,13 +1,15 @@
+from pathlib import Path
+from dataclasses import dataclass
+
+import numpy as np
+from numpy.lib.recfunctions import unstructured_to_structured
+from scipy.spatial import KDTree
 import torch
 from torch.utils.data import Dataset
 import torchvision.io as tv_io
 import torchvision.transforms.v2.functional as F
-import numpy as np
 import pycolmap
-from dataclasses import dataclass
-from scipy.spatial import KDTree
-from plyfile import PlyData
-from pathlib import Path
+from plyfile import PlyData, PlyElement
 
 
 STARTING_OPACITY = -2.19722457734   # logit for 10% initial opacity
