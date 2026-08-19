@@ -83,6 +83,25 @@ class Gaussians3D:
         
         return cls(num, means, rotations, scales, opacities, sh_coefficients, use_opacity_sigmoid, use_scale_exponential, color_bias)
 
+    def to_ply(self, path: str | Path):
+        means = self.means.numpy(force=True)
+        rotations = self.rotations.numpy(force=True)
+        scales = self.scales.numpy(force=True)
+        opacities = self.opacities.numpy(force=True).reshape((self.num, 1))
+        dcs = self.sh_coefficients[0].numpy(force=True)
+        rests = np.permute_dims(self.sh_coefficients[1:].numpy(force=True), [1, 2, 0]).reshape((self.num, -1))
+        vertex_data = np.concat([means, rotations, scales, opacities, dcs, rests], axis=1)
+        vertex_data = unstructured_to_structured(vertex_data,
+            dtype= [("x","f4"), ("y","f4"), ("z","f4")] +
+                   [(f"rot_{i}","f4") for i in range(4)] +
+                   [(f"scale_{i}","f4") for i in range(3)] +
+                   [("opacity","f4")] +
+                   [(f"f_dc_{i}","f4") for i in range(3)] +
+                   [(f"f_rest_{i}","f4") for i in range(45)]
+        )
+
+        PlyData([PlyElement.describe(vertex_data, "vertex")]).write(path)
+
     def to_device(self, device):
         self.means = self.means.to(device)
         self.rotations = self.rotations.to(device)
