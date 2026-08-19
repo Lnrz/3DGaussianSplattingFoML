@@ -6,7 +6,7 @@ import slangpy as spy
 
 @dataclass
 class Camera:
-    screensize: tuple[int,int] | Sequence[int]
+    screensize: Sequence[int]
     intrinsics: torch.Tensor
     half_fov_sin_cos: torch.Tensor
     extrinsics: torch.Tensor
@@ -14,12 +14,14 @@ class Camera:
 @dataclass
 class RenderOptions:
     max_sh_degree: int = 4
+    background_color: Sequence[float] = field(default_factory=lambda: [.0, .0, .0])
     covariance_determinant_thres: float = 1e-4
     alpha_thres: float = 1./255.
     max_alpha: float = 0.99
     min_transmittance : float = 0.0001
     nearFar: Sequence[float] = field(default_factory=lambda: [0.01, 100])
     save_data_for_backprop: bool=False
+    collect_data_for_densification: bool=False
 
 @dataclass
 class RenderContext:
@@ -36,21 +38,15 @@ class RenderContext:
 
     tile_size: int
     block_size: int
-    device: any
-
-    dummy_2d_float: torch.Tensor
-    dummy_2d_int: torch.Tensor
+    device: torch.device
 
     @classmethod
-    def from_settings(cls, gaussian_num: int, tile_size: int, block_size: int, slang_module: spy.Module, screensize=None, exponential_resizing: bool=False, device="cuda"):
+    def from_settings(cls, gaussian_num: int, tile_size: int, block_size: int, slang_module: spy.Module, screensize: Sequence[int] | None=None, exponential_resizing: bool=False, device="cuda"):
         projections = data.ProjectedGaussians.from_size(gaussian_num, device)
-        tiles = data.ScreenTiles.from_screensize(screensize, tile_size, device) if screensize else None
+        tiles = data.ScreenTiles.from_screensize(screensize, tile_size, device) if screensize is not None else None
         instances = data.GaussiansInstances.from_size(gaussian_num, device=device)
         
-        dummy_2d_float = torch.empty((1,1), dtype=torch.float32, device=device)
-        dummy_2d_int = torch.empty_like(dummy_2d_float, dtype=torch.int32)
-
-        ctx = cls(projections, instances, tiles, exponential_resizing, slang_module, None, None, None, None, tile_size, block_size, device, dummy_2d_float, dummy_2d_int)
+        ctx = cls(projections, instances, tiles, exponential_resizing, slang_module, None, None, None, None, tile_size, block_size, device)
         ctx.__create_functions()
 
         return ctx
@@ -86,6 +82,70 @@ class RenderContext:
         self.render = self.shader_module.renderGaussians.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.tile_size, self.tile_size))
 
 
+@dataclass
+class BackpropagationData:
+    accumulated_transmittances: torch.Tensor
+    processed_gaussian_counts: torch.Tensor
+    are_colors_clamped: torch.Tensor
+
+    @classmethod
+    def dummy(cls, device="cuda"):
+        dummy_float = torch.zeros(1, dtype=torch.float32, device=device)
+        dummy_int = torch.zeros(1, dtype=torch.int32, device=device)
+        dummy_bool = torch.zeros(1, dtype=torch.bool, device=device)
+
+        return cls(dummy_float, dummy_int, dummy_bool)
+
+    @classmethod
+    def from_settings(cls, gaussian_count: int, screen_size: Sequence[int] | None=None, device="cuda"):
+        backprop_data = cls.dummy(device=device)
+        if screen_size is None:
+            backprop_data.are_colors_clamped = torch.tensor((gaussian_count, 3), dtype=torch.bool, device=device)
+        else:
+            backprop_data.ensure_capacity(gaussian_count, screen_size)
+
+        return backprop_data
+
+    def ensure_capacity(self, gaussian_count: int, screen_size: Sequence[int]):
+        if (self.accumulated_transmittances.shape[0] < screen_size[0]) or (self.accumulated_transmittances.shape[1] < screen_size[1]):
+            self.accumulated_transmittances = torch.zeros((screen_size[1], screen_size[0]), dtype=torch.float32, device=self.accumulated_transmittances.device)
+        if (self.processed_gaussian_counts.shape[0] < screen_size[0]) or (self.processed_gaussian_counts.shape[1] < screen_size[1]):
+            self.processed_gaussian_counts = torch.zeros((screen_size[1], screen_size[0]), dtype=torch.int32, device=self.processed_gaussian_counts.device)
+
+        if self.are_colors_clamped.shape[0] < gaussian_count:
+            self.are_colors_clamped = torch.zeros((gaussian_count, 3), dtype=torch.bool, device=self.are_colors_clamped.device)
+
+
+@dataclass
+class DensificationData:
+    gaussian_image_radii: torch.Tensor
+    view_counters: torch.Tensor
+
+    @classmethod
+    def dummy(cls, device="cuda"):
+        dummy_float = torch.zeros(1, dtype=torch.float32, device=device)
+        dummy_int = torch.zeros(1, dtype=torch.int32, device=device)
+
+        return cls(dummy_float, dummy_int)
+
+    @classmethod
+    def from_settings(cls, gaussian_count: int, device="cuda"):
+        densif_data = cls.dummy(device=device)
+        densif_data.ensure_capacity(gaussian_count=gaussian_count)
+
+        return densif_data
+
+    def ensure_capacity(self, gaussian_count: int):
+        if self.gaussian_image_radii.shape[0] < gaussian_count:
+            self.gaussian_image_radii = torch.zeros(gaussian_count, dtype=torch.float32, device=self.gaussian_image_radii.device)
+        if self.view_counters.shape[0] < gaussian_count:
+            self.view_counters = torch.zeros(gaussian_count, dtype=torch.int32, device=self.view_counters.device)
+
+    def zero(self):
+        self.gaussian_image_radii.zero_()
+        self.view_counters.zero_()
+
+
 def create_slangpy_device_for_torch(type: spy.DeviceType=spy.DeviceType.cuda, include_paths=[], torch_device=None,
                           fp_mode: spy.SlangFloatingPointMode=spy.SlangFloatingPointMode.default,
                           optimization_level: spy.SlangOptimizationLevel=spy.SlangOptimizationLevel.default,
@@ -115,47 +175,53 @@ def create_slangpy_device_for_torch(type: spy.DeviceType=spy.DeviceType.cuda, in
         existing_device_handles=handles,
     )
 
-def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOptions=None, image: torch.Tensor | None=None, backprop_data: tuple[torch.Tensor, torch.Tensor] | None=None):
-    if not isinstance(opts, RenderOptions):
-        opts = RenderOptions()
-    if not isinstance(image, torch.Tensor):
-        image = torch.empty((cam.screensize[1], cam.screensize[0], 3), dtype=torch.float32, device=ctx.device)
-    if not opts.save_data_for_backprop:
-        backprop_data = (ctx.dummy_2d_float, ctx.dummy_2d_int)
-    elif not isinstance(backprop_data, tuple[torch.Tensor, torch.Tensor]):
-        backprop_data = (
-            torch.empty((cam.screensize[1], cam.screensize[0]), dtype=torch.float32, device=ctx.device),
-            torch.empty((cam.screensize[1], cam.screensize[0]), dtype=torch.int32, device=ctx.device)
-        )
+def nearest_multiple(values: np.ndarray, multiple: int):
+    return (values + multiple - 1) // multiple * multiple
+
+def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOptions=None, image: torch.Tensor | None=None, backprop_data: BackpropagationData | None=None, densif_data: DensificationData | None=None):
+    opts = opts if isinstance(opts, RenderOptions) else RenderOptions()
+    image = image if isinstance(image, torch.Tensor) else torch.empty((cam.screensize[1], cam.screensize[0], 3), dtype=torch.float32, device=ctx.device)
+    backprop_data = backprop_data if isinstance(backprop_data, BackpropagationData) else BackpropagationData.dummy()
+    densif_data = densif_data if isinstance(densif_data, DensificationData) else DensificationData.dummy()
+    if image.shape[0] < cam.screensize[1] or image.shape[1] < cam.screensize[0] or image.shape[2] < 3:
+        raise ValueError(f"Image shape should be at least {(cam.screensize[1], cam.screensize[0], 3)}, was {image.shape}")
+    if opts.save_data_for_backprop:
+        backprop_data.ensure_capacity(gs.num, cam.screensize)
+    if opts.collect_data_for_densification:
+        densif_data.ensure_capacity(gs.num)
     ctx.ensure_capacity(gs.num, cam.screensize)
 
+    if opts.collect_data_for_densification:
+        ctx.projections.means = ctx.projections.means.detach()
     ctx.project(spy.grid((gs.num,)),
                 gs.means, gs.rotations, gs.scales, gs.sh_coefficients,
                 ctx.tiles.tiles_xy, cam.intrinsics, cam.half_fov_sin_cos, cam.extrinsics, opts.nearFar,
-                gs.use_scale_exponential, opts.covariance_determinant_thres, gs.color_bias, opts.max_sh_degree,
-                ctx.projections.means, ctx.projections.depths, ctx.projections.covariances, ctx.projections.colors, ctx.instances.counts)
-    
+                gs.use_scale_exponential, opts.covariance_determinant_thres, gs.color_bias, opts.max_sh_degree, opts.save_data_for_backprop, opts.collect_data_for_densification,
+                ctx.projections.means, ctx.projections.depths, ctx.projections.covariances, ctx.projections.colors, ctx.instances.counts,
+                backprop_data.are_colors_clamped, densif_data.gaussian_image_radii, densif_data.view_counters)
+    if opts.collect_data_for_densification:
+        ctx.projections.means.retain_grad()
+
     torch.cumsum(ctx.instances.counts[:gs.num], dim=0, out=ctx.instances.cumulative_counts[:gs.num])
     ctx.allocate_instances(gs.num)
     if ctx.instances.num > 0:
+        ctx.reset_tile_ranges()
         ctx.create_instances_and_keys(spy.grid((gs.num,)), gs.num,
                                     ctx.instances.counts, ctx.instances.cumulative_counts,
                                     ctx.projections.means, ctx.projections.depths, ctx.projections.covariances,
                                     ctx.tiles.tiles_xy,
                                     ctx.instances.instances, ctx.instances.keys)
-        
+
         torch.sort(ctx.instances.keys[:ctx.instances.num], stable=True, dim=0, out=(ctx.instances.sorted_keys[:ctx.instances.num], ctx.instances.sorted_keys_indices[:ctx.instances.num]))
         torch.index_select(ctx.instances.instances[:ctx.instances.num], dim=0, index=ctx.instances.sorted_keys_indices[:ctx.instances.num], out=ctx.instances.sorted_instances[:ctx.instances.num])
         ctx.find_tile_ranges(spy.grid((ctx.instances.num,)), ctx.instances.num, ctx.instances.sorted_keys, ctx.tiles.ranges)
-    
-    ctx.render(spy.grid(cam.screensize), spy.thread_id(),
-               ctx.tiles.tiles_xy,
+
+    render_grid = nearest_multiple(np.array(cam.screensize), ctx.tile_size).tolist()
+    ctx.render(spy.grid(render_grid), spy.thread_id(),
+               [*cam.screensize], ctx.tiles.tiles_xy,
                ctx.instances.sorted_instances, ctx.tiles.ranges,
                ctx.projections.means, ctx.projections.covariances, ctx.projections.colors, gs.opacities,
-               gs.use_opacity_sigmoid, opts.alpha_thres, opts.max_alpha, opts.min_transmittance, opts.save_data_for_backprop,
-               image, backprop_data[0], backprop_data[1])
+               gs.use_opacity_sigmoid, opts.alpha_thres, opts.max_alpha, opts.min_transmittance, opts.save_data_for_backprop, opts.background_color,
+               image, backprop_data.accumulated_transmittances, backprop_data.processed_gaussian_counts)
 
-    if ctx.instances.num > 0:
-        ctx.reset_tile_ranges()
-
-    return image if not opts.save_data_for_backprop else image, backprop_data
+    return image, backprop_data, densif_data
