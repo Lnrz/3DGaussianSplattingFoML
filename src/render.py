@@ -88,7 +88,10 @@ class RenderContext:
 
 def create_slangpy_device_for_torch(type: spy.DeviceType=spy.DeviceType.cuda, include_paths=[], torch_device=None,
                           fp_mode: spy.SlangFloatingPointMode=spy.SlangFloatingPointMode.default,
-                          optimization_level: spy.SlangOptimizationLevel=spy.SlangOptimizationLevel.default):
+                          optimization_level: spy.SlangOptimizationLevel=spy.SlangOptimizationLevel.default,
+                          debug_info: spy.SlangDebugInfoLevel = spy.SlangDebugInfoLevel.standard,
+                          enable_debug_layers: bool=False,
+                          enable_print: bool=False):
     torch.cuda.init()
     torch.cuda.current_device()
     torch.cuda.current_stream()
@@ -103,8 +106,11 @@ def create_slangpy_device_for_torch(type: spy.DeviceType=spy.DeviceType.cuda, in
             "include_paths": [spy.SHADER_PATH] + include_paths,
             "floating_point_mode" : fp_mode,
             "optimization" : optimization_level,
-            "disable_warnings" : ["31000"] # warning about shared memory array of link-time constant length being experimental
+            "disable_warnings" : ["31000"], # warning about shared memory array of link-time constant length being experimental
+            "debug_info" : debug_info,
         },
+        enable_debug_layers=enable_debug_layers,
+        enable_print=enable_print,
         enable_cuda_interop=(type != spy.DeviceType.cuda),
         existing_device_handles=handles,
     )
