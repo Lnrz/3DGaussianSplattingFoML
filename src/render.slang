@@ -17,7 +17,7 @@ int getTileId(int x, int y, int2 tilesXY) {
 }
 
 [Differentiable]
-float2 cameraToScreen(float3 cameraPos, float4 intrinsics) {
+float2 cameraToScreen(float3 cameraPos, no_diff float4 intrinsics) {
     let focalX = intrinsics.x;
     let focalY = intrinsics.y;
     let centerX = intrinsics.z;
@@ -48,7 +48,7 @@ float3x3 quaternionToMatrix(float4 quaternion) {
 }
 
 [Differentiable]
-float2x3 getProjectionApproximation(float3 cameraPos, float2 focals) {
+float2x3 getProjectionApproximation(float3 cameraPos, no_diff float2 focals) {
     let z2 = cameraPos.z * cameraPos.z;
     return float2x3(
         focals.x / cameraPos.z, 0, -focals.x * cameraPos.x / z2,
@@ -57,7 +57,7 @@ float2x3 getProjectionApproximation(float3 cameraPos, float2 focals) {
 }
 
 [Differentiable]
-float2x2 compute2dCovariance(float3 scale, float4 quaternion, float3x3 viewTransform, float2x3 projApprox) {
+float2x2 compute2dCovariance(float3 scale, float4 quaternion, no_diff float3x3 viewTransform, float2x3 projApprox) {
     let rotationMat = quaternionToMatrix(normalize(quaternion));
     let scaleMatSqrd = float3x3(
         scale.x * scale.x, 0., 0.,
@@ -91,6 +91,11 @@ float3 getCameraCenter(float3x4 extrinsics) {
     return -mul(translation, rotation);
 }
 
+[Differentiable]
+float3 getDirection(no_diff float3 from, float3 to) {
+    return normalize(to - from);
+}
+
 namespace ShNorm {
     static const float N0 = 0.28209479177387814;
     
@@ -111,8 +116,8 @@ namespace ShNorm {
     static const float N3_p3 = -0.5900435899266435;
 }
 
-[Differentiable]
-float3 computeColor(float3 direction, IDiffTensor<float, 3> shCoefs, uint idx, int maxDeg) {
+[BackwardDerivative(computeColorBwd)]
+float3 computeColor(float3 direction, DiffTensor<float, 3> shCoefs, uint idx, int maxDeg) {
     let x = direction.x;
     let y = direction.y;
     let z = direction.z;
@@ -145,6 +150,152 @@ float3 computeColor(float3 direction, IDiffTensor<float, 3> shCoefs, uint idx, i
     return color;
 }
 
+void computeColorBwd(inout DifferentialPair<float3> direction, DiffTensor<float, 3> shCoefs, uint idx, int maxDeg, float3 colorGrad) {
+    let x = direction.p.x;
+    let y = direction.p.y;
+    let z = direction.p.z;
+    let xy = x * y;
+    let yz = y * z;
+    let xz = x * z;
+    let xyz = xy * z;
+    let x2 = x * x;
+    let y2 = y * y;
+    let z2 = z * z;
+    var directionGrad = float3(0.);
+
+    shCoefs._grad_out[0, idx, 0] += ShNorm::N0 * colorGrad[0];
+    shCoefs._grad_out[0, idx, 1] += ShNorm::N0 * colorGrad[1];
+    shCoefs._grad_out[0, idx, 2] += ShNorm::N0 * colorGrad[2];
+
+    if (maxDeg < 1) {
+        direction = diffPair(direction.p, directionGrad);
+        return;
+    }
+    shCoefs._grad_out[1, idx, 0] -= ShNorm::N1 * y * colorGrad[0];
+    shCoefs._grad_out[1, idx, 1] -= ShNorm::N1 * y * colorGrad[1];
+    shCoefs._grad_out[1, idx, 2] -= ShNorm::N1 * y * colorGrad[2];
+
+    shCoefs._grad_out[2, idx, 0] += ShNorm::N1 * z * colorGrad[0];
+    shCoefs._grad_out[2, idx, 1] += ShNorm::N1 * z * colorGrad[1];
+    shCoefs._grad_out[2, idx, 2] += ShNorm::N1 * z * colorGrad[2];
+    
+    shCoefs._grad_out[3, idx, 0] += ShNorm::N1 * x * colorGrad[0];
+    shCoefs._grad_out[3, idx, 1] += ShNorm::N1 * x * colorGrad[1];
+    shCoefs._grad_out[3, idx, 2] += ShNorm::N1 * x * colorGrad[2];
+
+    directionGrad.x += dot(colorGrad, ShNorm::N1 * float3(shCoefs[3, idx, 0], shCoefs[3, idx, 1], shCoefs[3, idx, 2]));
+    directionGrad.y += dot(colorGrad, -1. * ShNorm::N1 * float3(shCoefs[1, idx, 0], shCoefs[1, idx, 1], shCoefs[1, idx, 2]));
+    directionGrad.z += dot(colorGrad, ShNorm::N1 * float3(shCoefs[2, idx, 0], shCoefs[2, idx, 1], shCoefs[2, idx, 2]));
+
+    if (maxDeg < 2) {
+        direction = diffPair(direction.p, directionGrad);
+        return;
+    }
+    shCoefs._grad_out[4, idx, 0] += ShNorm::N2_m2 * xy * colorGrad[0];
+    shCoefs._grad_out[4, idx, 1] += ShNorm::N2_m2 * xy * colorGrad[1];
+    shCoefs._grad_out[4, idx, 2] += ShNorm::N2_m2 * xy * colorGrad[2];
+    
+    shCoefs._grad_out[5, idx, 0] += ShNorm::N2_m1 * yz * colorGrad[0];
+    shCoefs._grad_out[5, idx, 1] += ShNorm::N2_m1 * yz * colorGrad[1];
+    shCoefs._grad_out[5, idx, 2] += ShNorm::N2_m1 * yz * colorGrad[2];
+    
+    shCoefs._grad_out[6, idx, 0] += ShNorm::N2_0 * (2*z2-x2-y2) * colorGrad[0];
+    shCoefs._grad_out[6, idx, 1] += ShNorm::N2_0 * (2*z2-x2-y2) * colorGrad[1];
+    shCoefs._grad_out[6, idx, 2] += ShNorm::N2_0 * (2*z2-x2-y2) * colorGrad[2];
+    
+    shCoefs._grad_out[7, idx, 0] += ShNorm::N2_p1 * xz * colorGrad[0];
+    shCoefs._grad_out[7, idx, 1] += ShNorm::N2_p1 * xz * colorGrad[1];
+    shCoefs._grad_out[7, idx, 2] += ShNorm::N2_p1 * xz * colorGrad[2];
+    
+    shCoefs._grad_out[8, idx, 0] += ShNorm::N2_p2 * (x2-y2) * colorGrad[0];
+    shCoefs._grad_out[8, idx, 1] += ShNorm::N2_p2 * (x2-y2) * colorGrad[1];
+    shCoefs._grad_out[8, idx, 2] += ShNorm::N2_p2 * (x2-y2) * colorGrad[2];
+
+    let shCoef4 = float3(shCoefs[4, idx, 0], shCoefs[4, idx, 1], shCoefs[4, idx, 2]);
+    let shCoef5 = float3(shCoefs[5, idx, 0], shCoefs[5, idx, 1], shCoefs[5, idx, 2]);
+    let shCoef6 = float3(shCoefs[6, idx, 0], shCoefs[6, idx, 1], shCoefs[6, idx, 2]);
+    let shCoef7 = float3(shCoefs[7, idx, 0], shCoefs[7, idx, 1], shCoefs[7, idx, 2]);
+    let shCoef8 = float3(shCoefs[8, idx, 0], shCoefs[8, idx, 1], shCoefs[8, idx, 2]);
+    directionGrad.x += dot(colorGrad,
+        y * ShNorm::N2_m2 * shCoef4
+        - 2 * x * ShNorm::N2_0 * shCoef6
+        + z * ShNorm::N2_p1 * shCoef7
+        + 2 * x * ShNorm::N2_p2 * shCoef8);
+    directionGrad.y += dot(colorGrad,
+        x * ShNorm::N2_m2 * shCoef4
+        + z * ShNorm::N2_m1 * shCoef5
+        - 2 * y * ShNorm::N2_0 * shCoef6
+        - 2 * y * ShNorm::N2_p2 * shCoef8);
+    directionGrad.z += dot(colorGrad,
+        y * ShNorm::N2_m1 * shCoef5
+        + 4 * z * ShNorm::N2_0 * shCoef6
+        + x * ShNorm::N2_p1 * shCoef7);
+
+    if (maxDeg < 3) {
+        direction = diffPair(direction.p, directionGrad);
+        return;
+    }
+    shCoefs._grad_out[9, idx, 0] += ShNorm::N3_m3 * y*(3*x2-y2) * colorGrad[0];
+    shCoefs._grad_out[9, idx, 1] += ShNorm::N3_m3 * y*(3*x2-y2) * colorGrad[1];
+    shCoefs._grad_out[9, idx, 2] += ShNorm::N3_m3 * y*(3*x2-y2) * colorGrad[2];
+
+    shCoefs._grad_out[10, idx, 0] += ShNorm::N3_m2 * xyz * colorGrad[0];
+    shCoefs._grad_out[10, idx, 1] += ShNorm::N3_m2 * xyz * colorGrad[1];
+    shCoefs._grad_out[10, idx, 2] += ShNorm::N3_m2 * xyz * colorGrad[2];
+
+    shCoefs._grad_out[11, idx, 0] += ShNorm::N3_m1 * y*(4*z2-x2-y2) * colorGrad[0];
+    shCoefs._grad_out[11, idx, 1] += ShNorm::N3_m1 * y*(4*z2-x2-y2) * colorGrad[1];
+    shCoefs._grad_out[11, idx, 2] += ShNorm::N3_m1 * y*(4*z2-x2-y2) * colorGrad[2];
+
+    shCoefs._grad_out[12, idx, 0] += ShNorm::N3_0 * z*(2*z2-3*x2-3*y2) * colorGrad[0];
+    shCoefs._grad_out[12, idx, 1] += ShNorm::N3_0 * z*(2*z2-3*x2-3*y2) * colorGrad[1];
+    shCoefs._grad_out[12, idx, 2] += ShNorm::N3_0 * z*(2*z2-3*x2-3*y2) * colorGrad[2];
+
+    shCoefs._grad_out[13, idx, 0] += ShNorm::N3_p1 * x*(4*z2-x2-y2) * colorGrad[0];
+    shCoefs._grad_out[13, idx, 1] += ShNorm::N3_p1 * x*(4*z2-x2-y2) * colorGrad[1];
+    shCoefs._grad_out[13, idx, 2] += ShNorm::N3_p1 * x*(4*z2-x2-y2) * colorGrad[2];
+
+    shCoefs._grad_out[14, idx, 0] += ShNorm::N3_p2 * z*(x2-y2) * colorGrad[0];
+    shCoefs._grad_out[14, idx, 1] += ShNorm::N3_p2 * z*(x2-y2) * colorGrad[1];
+    shCoefs._grad_out[14, idx, 2] += ShNorm::N3_p2 * z*(x2-y2) * colorGrad[2];
+
+    shCoefs._grad_out[15, idx, 0] += ShNorm::N3_p3 * x*(x2-3*y2) * colorGrad[0];
+    shCoefs._grad_out[15, idx, 1] += ShNorm::N3_p3 * x*(x2-3*y2) * colorGrad[1];
+    shCoefs._grad_out[15, idx, 2] += ShNorm::N3_p3 * x*(x2-3*y2) * colorGrad[2];
+
+    let shCoef9 = float3(shCoefs[9, idx, 0], shCoefs[9, idx, 1], shCoefs[9, idx, 2]);
+    let shCoef10 = float3(shCoefs[10, idx, 0], shCoefs[10, idx, 1], shCoefs[10, idx, 2]);
+    let shCoef11 = float3(shCoefs[11, idx, 0], shCoefs[11, idx, 1], shCoefs[11, idx, 2]);
+    let shCoef12 = float3(shCoefs[12, idx, 0], shCoefs[12, idx, 1], shCoefs[12, idx, 2]);
+    let shCoef13 = float3(shCoefs[13, idx, 0], shCoefs[13, idx, 1], shCoefs[13, idx, 2]);
+    let shCoef14 = float3(shCoefs[14, idx, 0], shCoefs[14, idx, 1], shCoefs[14, idx, 2]);
+    let shCoef15 = float3(shCoefs[15, idx, 0], shCoefs[15, idx, 1], shCoefs[15, idx, 2]);
+    directionGrad.x += dot(colorGrad,
+        6 * xy * ShNorm::N3_m3 * shCoef9
+        + yz * ShNorm::N3_m2 * shCoef10
+        - 2 * xy * ShNorm::N3_m1 * shCoef11
+        - 6 * xz * ShNorm::N3_0 * shCoef12
+        + (4 * z2 - 3 * x2 - y2) * ShNorm::N3_p1 * shCoef13
+        + 2 * xz * ShNorm::N3_p2 * shCoef14
+        + (3 * x2 - 3 * y2) * ShNorm::N3_p3 * shCoef15);
+    directionGrad.y += dot(colorGrad,
+        (3 * x2 - 3 * y2) * ShNorm::N3_m3 * shCoef9
+        + xz * ShNorm::N3_m2 * shCoef10
+        + (4 * z2 - x2 - 3 * y2) * ShNorm::N3_m1 * shCoef11
+        - 6 * yz * ShNorm::N3_0 * shCoef12
+        - 2 * xy * ShNorm::N3_p1 * shCoef13
+        - 2 * yz * ShNorm::N3_p2 * shCoef14
+        - 6 * xy * ShNorm::N3_p3 * shCoef15);
+    directionGrad.z += dot(colorGrad,
+        xy * ShNorm::N3_m2 * shCoef10
+        + 8 * yz * ShNorm::N3_m1 * shCoef11
+        + (6 * z2 - 3 * x2 - 3 * y2) * ShNorm::N3_0 * shCoef12
+        + 8 * xz * ShNorm::N3_p1 * shCoef13
+        + (x2 - y2) * ShNorm::N3_p2 * shCoef14);
+
+    direction = diffPair(direction.p, directionGrad);
+}
+
 // sphere-frustrum test
 bool isCulled(float3 cameraPos, float3 scales, float4 halfFovSinCos, float2 nearFar) {
     if (cameraPos.z < nearFar.x || cameraPos.z > nearFar.y || !isValidFloat(cameraPos)) return true;
@@ -168,13 +319,24 @@ bool isCulled(float3 cameraPos, float3 scales, float4 halfFovSinCos, float2 near
     return false;
 }
 
-[Differentiable]
+// [ a b ]
+// [ c d ]
+float2 compute2x2Eigenvalues(float2x2 M) {
+    let aMd = M._11 - M._22;
+    let discrim = aMd * aMd + 4 * M._12 * M._21;
+    let aPdHalf = (M._11 + M._22) / 2.;
+    let discrimRootHalf = sqrt(discrim) / 2.;
+
+    return float2(aPdHalf + discrimRootHalf, aPdHalf - discrimRootHalf);
+}
+
+[BackwardDerivative(projectGaussiansBwd)]
 void projectGaussians(
     uint idx,
-    IDiffTensor<float, 2> worldPositions,
-    IDiffTensor<float, 2> rotations,
-    IDiffTensor<float, 2> scales,
-    IDiffTensor<float, 3> shCoefficients,
+    DiffTensor<float, 2> worldPositions,
+    DiffTensor<float, 2> rotations,
+    DiffTensor<float, 2> scales,
+    DiffTensor<float, 3> shCoefficients,
     int2 tilesXY,
     no_diff float4 intrinsics,
     no_diff float4 halfFovSinCos,
@@ -184,11 +346,16 @@ void projectGaussians(
     no_diff float detThres,
     no_diff float colorBias,
     int maxShDegree,
-    IWDiffTensor<float, 2> screenPositions,
+    bool saveBackpropData,
+    bool collectDensificationData,
+    WDiffTensor<float, 2> screenPositions,
     IWTensor<float, 1> depths,
-    IWDiffTensor<float, 2> covariances,
-    IWDiffTensor<float, 2> colors,
-    IWTensor<int, 1> counts)
+    WDiffTensor<float, 2> covariances,
+    WDiffTensor<float, 2> colors,
+    TensorView<int> counts,
+    TensorView<bool> areColorsClamped,
+    TensorView<float> gaussianImageRadii,
+    TensorView<int> viewCounters)
 {
     if (idx >= worldPositions.shape[0]) return;
 
@@ -221,19 +388,104 @@ void projectGaussians(
         counts[idx] = 0;
         return;
     }
-    
-    let direction = normalize(worldPos - no_diff(getCameraCenter(extrinsics)));
+
+    let direction = getDirection(getCameraCenter(extrinsics), worldPos);
     let color = computeColor(direction, shCoefficients, idx, maxShDegree) + colorBias;
+    let clampedColor = clamp(color, 0., 1.);
+    
     screenPositions[idx, 0] = screenPos.x;
     screenPositions[idx, 1] = screenPos.y;
     depths[idx] = cameraPos.z;
     covariances[idx, 0] = covariance.x;
     covariances[idx, 1] = covariance.y;
     covariances[idx, 2] = covariance.z;
-    colors[idx, 0] = color.x;
-    colors[idx, 1] = color.y;
-    colors[idx, 2] = color.z;
+    colors[idx, 0] = clampedColor.x;
+    colors[idx, 1] = clampedColor.y;
+    colors[idx, 2] = clampedColor.z;
     counts[idx] = intersectionNum;
+
+    if (!saveBackpropData) return;
+    let isColorClamped = color != clampedColor;
+    areColorsClamped[idx, 0] = isColorClamped.x;
+    areColorsClamped[idx, 1] = isColorClamped.y;
+    areColorsClamped[idx, 2] = isColorClamped.z;
+
+    if (!collectDensificationData) return;
+    let gaussianImageRadius = 3. * sqrt(compute2x2Eigenvalues(covarianceMat).x);
+    gaussianImageRadii[idx] = max(gaussianImageRadii[idx], gaussianImageRadius);
+    viewCounters[idx] = viewCounters[idx] + 1;
+}
+
+void projectGaussiansBwd(
+    uint idx,
+    DiffTensor<float, 2> worldPositions,
+    DiffTensor<float, 2> rotations,
+    DiffTensor<float, 2> scales,
+    DiffTensor<float, 3> shCoefficients,
+    int2 tilesXY,
+    float4 intrinsics,
+    float4 halfFovSinCos,
+    float3x4 extrinsics,
+    float2 nearFar,
+    bool useExp,
+    float detThres,
+    float colorBias,
+    int maxShDegree,
+    bool saveBackpropData,
+    bool collectDensificationData,
+    WDiffTensor<float, 2> screenPositions,
+    IWTensor<float, 1> depths,
+    WDiffTensor<float, 2> covariances,
+    WDiffTensor<float, 2> colors,
+    TensorView<int> counts,
+    TensorView<bool> areColorsClamped,
+    TensorView<float> gaussianImageRadii,
+    TensorView<int> viewCounters)
+{
+    if (!saveBackpropData || idx >= worldPositions.shape[0]) return;
+    if (counts[idx] <= 0) return;
+
+    let screenPosGrad = float2(screenPositions._grad_in[idx, 0], screenPositions._grad_in[idx, 1]);
+    let covariancesGrad = float3(covariances._grad_in[idx, 0], covariances._grad_in[idx, 1], covariances._grad_in[idx, 2]);
+    let covMatGrad = float2x2(covariancesGrad.x, covariancesGrad.z / 2., covariancesGrad.z / 2., covariancesGrad.y);
+    let colorGrad = float3(
+        colors._grad_in[idx, 0] * (areColorsClamped[idx, 0] ? .0 : 1.),
+        colors._grad_in[idx, 1] * (areColorsClamped[idx, 1] ? .0 : 1.),
+        colors._grad_in[idx, 2] * (areColorsClamped[idx, 2] ? .0 : 1.)
+    );
+
+    var worldPos = diffPair(float3(worldPositions[idx, 0], worldPositions[idx, 1], worldPositions[idx, 2]));
+    var cameraPos = diffPair(mul(extrinsics, float4(worldPos.p, 1.)));
+    bwd_diff(cameraToScreen)(cameraPos, intrinsics, screenPosGrad);
+    var camPosGradAccum = cameraPos.d;
+
+    var storedScale = float3(scales[idx, 0], scales[idx, 1], scales[idx, 2]);
+    var scale = diffPair(useExp ? exp(storedScale) : storedScale);
+    var rotation = diffPair(float4(rotations[idx, 0], rotations[idx, 1], rotations[idx, 2], rotations[idx, 3]));
+    var projApprox = diffPair(getProjectionApproximation(cameraPos.p, intrinsics.xy));
+    let cameraRotation = (float3x3)extrinsics;
+    bwd_diff(compute2dCovariance)(scale, rotation, cameraRotation, projApprox, covMatGrad);
+    bwd_diff(getProjectionApproximation)(cameraPos, intrinsics.xy, projApprox.d);
+    let scaleGrad = useExp ? scale.d * scale.p : scale.d;
+    camPosGradAccum += cameraPos.d;
+    let worldPosGradCamPosContrib = mul(camPosGradAccum, cameraRotation);
+
+    let cameraCenter = getCameraCenter(extrinsics);
+    var viewDir = diffPair(getDirection(cameraCenter, worldPos.p));
+    bwd_diff(computeColor)(viewDir, shCoefficients, idx, maxShDegree, colorGrad);
+    bwd_diff(getDirection)(cameraCenter, worldPos, viewDir.d);
+    let worldPosGrad = worldPosGradCamPosContrib + worldPos.d;
+
+    worldPositions._grad_out[idx, 0] += worldPosGrad.x;
+    worldPositions._grad_out[idx, 1] += worldPosGrad.y;
+    worldPositions._grad_out[idx, 2] += worldPosGrad.z;
+    rotations._grad_out[idx, 0] += rotation.d.x;
+    rotations._grad_out[idx, 1] += rotation.d.y;
+    rotations._grad_out[idx, 2] += rotation.d.z;
+    rotations._grad_out[idx, 3] += rotation.d.w;
+    scales._grad_out[idx, 0] += scaleGrad.x;
+    scales._grad_out[idx, 1] += scaleGrad.y;
+    scales._grad_out[idx, 2] += scaleGrad.z;
 }
 
 void createGaussianInstances(
@@ -368,6 +620,7 @@ float computeGaussianAlpha(int sharedGaussianIdx, float2 pixelCenter, bool useSi
 [BackwardDerivative(renderGaussiansBwd)]
 void renderGaussians(
     uint2, uint threadId,
+    int2 screensize,
     int2 tilesXY,
     ITensor<int, 1> instances,
     ITensor<int, 2> tileRanges,
@@ -380,19 +633,20 @@ void renderGaussians(
     no_diff float maxAlpha,
     no_diff float minTransmittance,
     bool saveBackpropData,
+    no_diff float3 backgroundColor,
     WDiffTensor<float, 3> image,
-    IRWTensor<float, 2> accumulatedTransmittances,
-    IRWTensor<int, 2> processedGaussianCount)
+    TensorView<float> accumulatedTransmittances,
+    TensorView<int> processedGaussianCount)
 {
     let workgroupSize = WorkgroupSize().x;
     let tileId = threadId / workgroupSize; // here we assume that each tile is mapped to a workgroup
     let localThreadId = threadId % workgroupSize;
     let pixelCoords = getPixelCoords(localThreadId, tileId, tilesXY.x);
     let pixelCenter = pixelCoords + .5;
-    let isValidPixel = (pixelCoords.x < image.shape[1]) && (pixelCoords.y < image.shape[0]); // IMPORTANT the image tensor shape should be (H,W,C) NOT (C,H,W)
+    let isValidPixel = all(pixelCoords < screensize);
     let tileRange = int2(tileRanges[tileId, 0], tileRanges[tileId, 1]);
     let maxGaussians = tileRange.y - tileRange.x;
-    
+
     var color = float3(.0);
     var transmittance = 1.;
     var processedGaussianNum = 0;
@@ -414,7 +668,6 @@ void renderGaussians(
                 for (int i = 0; i < workgroupSize; i++, processedGaussianNum++) {
                     if (processedGaussianNum == maxGaussians) {
                         hasFinished = true;
-                        finishedThreadNum.increment();
                         break;
                     }
                     let alpha = min(computeGaussianAlpha(i, pixelCenter, useSig), maxAlpha);
@@ -423,12 +676,15 @@ void renderGaussians(
                     let nextTransmittance = transmittance * (1 - alpha);
                     if (nextTransmittance <= minTransmittance) {
                         hasFinished = true;
-                        finishedThreadNum.increment();
                         break;
                     }
                     let gaussianColor = float3(sharedGaussians.reds[i], sharedGaussians.greens[i], sharedGaussians.blues[i]);
                     color += gaussianColor * alpha * transmittance;
                     transmittance = nextTransmittance;
+                }
+                if (hasFinished || processedGaussianNum == maxGaussians) {
+                    hasFinished = true;
+                    finishedThreadNum.increment();
                 }
             }
             loadIdx += workgroupSize;
@@ -438,29 +694,32 @@ void renderGaussians(
     }
 
     if (!isValidPixel) return;
+    color += transmittance * backgroundColor;
     image[pixelCoords.y, pixelCoords.x, 0] = color.x;
     image[pixelCoords.y, pixelCoords.x, 1] = color.y;
     image[pixelCoords.y, pixelCoords.x, 2] = color.z;
+
     if (!saveBackpropData) return;
     accumulatedTransmittances[pixelCoords.y, pixelCoords.x] = transmittance;
     processedGaussianCount[pixelCoords.y, pixelCoords.x] = processedGaussianNum;
 }
 
-groupshared Atomic<int> sharedBlockMaxGaussians;
+groupshared int sharedBlockMaxGaussians;
 
 int getBlockMaxGaussians(uint localThreadId, int threadMaxGaussians) {
-    if (localThreadId == 0) sharedBlockMaxGaussians.store(0);
+    if (localThreadId == 0) sharedBlockMaxGaussians = 0;
     GroupMemoryBarrierWithGroupSync();
 
     let waveMaxGaussians = WaveActiveMax(threadMaxGaussians);
-    if (WaveIsFirstLane()) sharedBlockMaxGaussians.reduceMax(waveMaxGaussians);
+    if (WaveIsFirstLane()) InterlockedMax(sharedBlockMaxGaussians, waveMaxGaussians);
     GroupMemoryBarrierWithGroupSync();
 
-    return sharedBlockMaxGaussians.load();
+    return sharedBlockMaxGaussians;
 }
 
 void renderGaussiansBwd(
     uint2, uint threadId,
+    int2 screensize,
     int2 tilesXY,
     ITensor<int, 1> instances,
     ITensor<int, 2> tileRanges,
@@ -471,25 +730,29 @@ void renderGaussiansBwd(
     bool useSig,
     float alphaThres,
     float maxAlpha,
-    float, bool,
+    float minTransmittance,
+    bool saveBackpropData,
+    float3 backgroundColor,
     WDiffTensor<float, 3> image,
-    IRWTensor<float, 2> accumulatedTransmittances,
-    IRWTensor<int, 2> processedGaussianCount)
+    TensorView<float> accumulatedTransmittances,
+    TensorView<int> processedGaussianCount)
 {
+    if (!saveBackpropData) return;
+
     let workgroupSize = WorkgroupSize().x;
     let tileId = threadId / workgroupSize;
     let localThreadId = threadId % workgroupSize;
     let pixelCoords = getPixelCoords(localThreadId, tileId, tilesXY.x);
     let pixelCenter = pixelCoords + .5;
-    let isValidPixel = (pixelCoords.x < image.shape[1]) && (pixelCoords.y < image.shape[0]);
+    let isValidPixel = all(pixelCoords < screensize);
     let tileRange = int2(tileRanges[tileId, 0], tileRanges[tileId, 1]);
     if (tileRange.y <= tileRange.x) return; // no gaussians were assigned to the tile/block, can return
 
     let threadMaxGaussians = isValidPixel ? processedGaussianCount[pixelCoords.y, pixelCoords.x] : 0;
     let blockMaxGaussians = getBlockMaxGaussians(localThreadId, threadMaxGaussians);
     if (blockMaxGaussians <= 0) return; // no thread in the tile/block has processed any gaussians, can return
-    
-    var loadIdx = tileRange.x + blockMaxGaussians - 1 - localThreadId;
+
+    int loadIdx = tileRange.x + blockMaxGaussians - 1 - localThreadId;
     let storeIdx = localThreadId;
     var batchMaxGaussianInstance = tileRange.x + blockMaxGaussians - 1;
     var batchMinGaussianInstance = batchMaxGaussianInstance - workgroupSize + 1;
@@ -501,7 +764,8 @@ void renderGaussiansBwd(
         image._grad_in[pixelCoords.y, pixelCoords.x, 1],
         image._grad_in[pixelCoords.y, pixelCoords.x, 2]
     );
-    float accumTransm = isValidPixel ? accumulatedTransmittances[pixelCoords.y, pixelCoords.x] : 1.;
+    let finalTransm = isValidPixel ? accumulatedTransmittances[pixelCoords.y, pixelCoords.x] : 1.;
+    float accumTransm = finalTransm;
     var backSum = float3(.0);
     while (batchMaxGaussianInstance >= tileRange.x) {
         if (loadIdx >= tileRange.x) {
@@ -521,33 +785,32 @@ void renderGaussiansBwd(
                 let invSigma = float2x2(b, -c, -c, a) / (a * b - c * c);
                 let storedOpacity = sharedGaussians.opacities[i];
                 let opacity = useSig ? sigmoid(storedOpacity) : storedOpacity;
-                
+
                 let delta = mean - pixelCenter;
                 let invSigmaDelta = mul(invSigma, delta);
                 let eSig = exp(-.5 * dot(delta, invSigmaDelta));
                 let alpha = min(opacity * eSig, maxAlpha);
                 if (alpha <= alphaThres) continue;
-                
-                accumTransm /= (1. - alpha);
+                accumTransm = accumTransm / (1. - alpha);
                 let dPixeldColor = float3(alpha * accumTransm);
                 let color = float3(sharedGaussians.reds[i], sharedGaussians.greens[i], sharedGaussians.blues[i]);
-                let dPixeldAlpha = color * accumTransm - backSum / (1 - alpha);
+                let dPixeldAlpha = color * accumTransm - backSum / (1. - alpha) - finalTransm / (1. - alpha) * backgroundColor;
                 let dAlphadOpacity = eSig;
                 let dAlphadSig = -alpha;
                 let dSigdMean = invSigmaDelta;
                 let dSigdSigma = -.5 * float3(
                     invSigmaDelta.x * invSigmaDelta.x,
                     invSigmaDelta.y * invSigmaDelta.y,
-                    2 * invSigmaDelta.x * invSigmaDelta.y
+                    2. * invSigmaDelta.x * invSigmaDelta.y
                 );
-                
+
                 let colorGrad = dPixeldColor * pixelGrad;
                 let alphaGrad = dot(dPixeldAlpha, pixelGrad);
-                let opacityGrad = dAlphadOpacity * alphaGrad;
+                let opacityGrad = (useSig ? opacity * (1. - opacity) : 1.) * dAlphadOpacity * alphaGrad;
                 let sigGrad = dAlphadSig * alphaGrad;
                 let meanGrad = dSigdMean * sigGrad;
                 let sigmaGrad = dSigdSigma * sigGrad;
-                
+
                 let gaussianIdx = instances[currGaussianInstance];
                 means._grad_out[gaussianIdx, 0] += meanGrad.x;
                 means._grad_out[gaussianIdx, 1] += meanGrad.y;
@@ -558,7 +821,7 @@ void renderGaussiansBwd(
                 colors._grad_out[gaussianIdx, 1] += colorGrad.y;
                 colors._grad_out[gaussianIdx, 2] += colorGrad.z;
                 opacities._grad_out[gaussianIdx] += opacityGrad;
-                
+
                 backSum += color * alpha * accumTransm;
             }
         }
@@ -566,5 +829,6 @@ void renderGaussiansBwd(
         batchMaxGaussianInstance -= workgroupSize;
         batchMinGaussianInstance -= workgroupSize;
         loadIdx -= workgroupSize;
+        GroupMemoryBarrierWithGroupSync();
     }
 }
