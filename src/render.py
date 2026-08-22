@@ -23,7 +23,7 @@ class RenderOptions:
     alpha_thres: float = 1./255.
     max_alpha: float = 0.99
     min_transmittance : float = 0.0001
-    nearFar: Sequence[float] = field(default_factory=lambda: [0.01, 100])
+    nearFar: Sequence[float] = field(default_factory=lambda: [0.2, 100])
     save_data_for_backprop: bool=False
     collect_data_for_densification: bool=False
 
