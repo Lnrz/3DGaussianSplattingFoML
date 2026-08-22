@@ -48,11 +48,16 @@ float3x3 quaternionToMatrix(float4 quaternion) {
 }
 
 [Differentiable]
-float2x3 getProjectionApproximation(float3 cameraPos, no_diff float2 focals) {
+float2x3 getProjectionApproximation(float3 cameraPos, no_diff float2 focals, no_diff float4 halfFovSinCos) {
+    let gaussianTan = cameraPos.xy / cameraPos.z;
+    let cameraTan = halfFovSinCos.xz / halfFovSinCos.yw;
+    let tanLimit = 1.3 * cameraTan;
+    let xy = clamp(gaussianTan, -tanLimit, tanLimit) * cameraPos.z;
+
     let z2 = cameraPos.z * cameraPos.z;
     return float2x3(
-        focals.x / cameraPos.z, 0, -focals.x * cameraPos.x / z2,
-        0, focals.y / cameraPos.z, -focals.y * cameraPos.y / z2
+        focals.x / cameraPos.z, 0, -focals.x * xy.x / z2,
+        0, focals.y / cameraPos.z, -focals.y * xy.y / z2
     );
 }
 
@@ -374,7 +379,7 @@ void projectGaussians(
     }
 
     let rotation = float4(rotations[idx, 0], rotations[idx, 1], rotations[idx, 2], rotations[idx, 3]);
-    let covarianceMat = compute2dCovariance(scale, rotation, (float3x3)extrinsics, getProjectionApproximation(cameraPos, intrinsics.xy));
+    let covarianceMat = compute2dCovariance(scale, rotation, (float3x3)extrinsics, getProjectionApproximation(cameraPos, intrinsics.xy, halfFovSinCos));
     let regularizationTerm = .3;
     let covariance = float3(covarianceMat._11_22 + regularizationTerm, covarianceMat._12);
     if (!isValidFloat(covariance)) {
@@ -460,10 +465,10 @@ void projectGaussiansBwd(
     var storedScale = float3(scales[idx, 0], scales[idx, 1], scales[idx, 2]);
     var scale = diffPair(useExp ? exp(storedScale) : storedScale);
     var rotation = diffPair(float4(rotations[idx, 0], rotations[idx, 1], rotations[idx, 2], rotations[idx, 3]));
-    var projApprox = diffPair(getProjectionApproximation(cameraPos.p, intrinsics.xy));
+    var projApprox = diffPair(getProjectionApproximation(cameraPos.p, intrinsics.xy, halfFovSinCos));
     let cameraRotation = (float3x3)extrinsics;
     bwd_diff(compute2dCovariance)(scale, rotation, cameraRotation, projApprox, covMatGrad);
-    bwd_diff(getProjectionApproximation)(cameraPos, intrinsics.xy, projApprox.d);
+    bwd_diff(getProjectionApproximation)(cameraPos, intrinsics.xy, halfFovSinCos, projApprox.d);
     let scaleGrad = useExp ? scale.d * scale.p : scale.d;
     camPosGradAccum += cameraPos.d;
     let worldPosGradCamPosContrib = mul(camPosGradAccum, cameraRotation);
