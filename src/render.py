@@ -19,7 +19,6 @@ class Camera:
 class RenderOptions:
     max_sh_degree: int = 4
     background_color: Sequence[float] = field(default_factory=lambda: [.0, .0, .0])
-    covariance_determinant_thres: float = 1e-4
     alpha_thres: float = 1./255.
     max_alpha: float = 0.99
     min_transmittance : float = 0.0001
@@ -200,7 +199,7 @@ def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOp
     ctx.project(spy.grid((gs.num,)),
                 gs.means, gs.rotations, gs.scales, gs.sh_coefficients,
                 ctx.tiles.tiles_xy, cam.intrinsics, cam.half_fov_sin_cos, cam.extrinsics, opts.nearFar,
-                gs.use_scale_exponential, opts.covariance_determinant_thres, gs.color_bias, opts.max_sh_degree, opts.save_data_for_backprop, opts.collect_data_for_densification,
+                gs.use_scale_exponential, gs.color_bias, opts.max_sh_degree, opts.save_data_for_backprop, opts.collect_data_for_densification,
                 ctx.projections.means, ctx.projections.depths, ctx.projections.covariances, ctx.projections.colors, ctx.instances.counts,
                 backprop_data.are_colors_clamped, densif_data.gaussian_image_radii, densif_data.view_counters)
     if opts.collect_data_for_densification:

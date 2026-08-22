@@ -343,7 +343,6 @@ void projectGaussians(
     no_diff float3x4 extrinsics,
     no_diff float2 nearFar,
     bool useExp,
-    no_diff float detThres,
     no_diff float colorBias,
     int maxShDegree,
     bool saveBackpropData,
@@ -376,9 +375,9 @@ void projectGaussians(
 
     let rotation = float4(rotations[idx, 0], rotations[idx, 1], rotations[idx, 2], rotations[idx, 3]);
     let covarianceMat = compute2dCovariance(scale, rotation, (float3x3)extrinsics, getProjectionApproximation(cameraPos, intrinsics.xy));
-    let covariance = covarianceMat._11_22_12;
-    let covDet = covariance.x * covariance.y - covariance.z * covariance.z;
-    if (!isValidFloat(covariance) || covDet < detThres) {
+    let regularizationTerm = .3;
+    let covariance = float3(covarianceMat._11_22 + regularizationTerm, covarianceMat._12);
+    if (!isValidFloat(covariance)) {
         counts[idx] = 0;
         return;
     }
@@ -428,7 +427,6 @@ void projectGaussiansBwd(
     float3x4 extrinsics,
     float2 nearFar,
     bool useExp,
-    float detThres,
     float colorBias,
     int maxShDegree,
     bool saveBackpropData,
