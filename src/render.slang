@@ -382,7 +382,8 @@ void projectGaussians(
     let covarianceMat = compute2dCovariance(scale, rotation, (float3x3)extrinsics, getProjectionApproximation(cameraPos, intrinsics.xy, halfFovSinCos));
     let regularizationTerm = .3;
     let covariance = float3(covarianceMat._11_22 + regularizationTerm, covarianceMat._12);
-    if (!isValidFloat(covariance)) {
+    let det = covariance.x * covariance.y - covariance.z * covariance.z;
+    if (!isValidFloat(covariance) || det <= .0) {
         counts[idx] = 0;
         return;
     }
