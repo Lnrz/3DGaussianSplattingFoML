@@ -1,4 +1,5 @@
-import "slangpy";
+import slangpy;
+import math;
 
 extern static const uint TILE_SIZE = 16;
 static const uint TILE_SIZE_SQRD = TILE_SIZE * TILE_SIZE;
@@ -29,25 +30,6 @@ float2 cameraToScreen(float3 cameraPos, no_diff float4 intrinsics) {
 }
 
 [Differentiable]
-float3x3 quaternionToMatrix(float4 quaternion) {
-    let w = quaternion.x;
-    let x = quaternion.y;
-    let y = quaternion.z;
-    let z = quaternion.w;
-    let xy = x * y;
-    let xz = x * z;
-    let yz = y * z;
-    let x2 = x * x;
-    let y2 = y * y;
-    let z2 = z * z;
-    return float3x3(
-        1-2*(y2+z2), 2*(xy-z*w), 2*(xz+y*w),
-        2*(xy+z*w), 1-2*(x2+z2), 2*(yz-x*w),
-        2*(xz-y*w), 2*(yz+x*w), 1-2*(x2+y2)
-    );
-}
-
-[Differentiable]
 float2x3 getProjectionApproximation(float3 cameraPos, no_diff float2 focals, no_diff float4 halfFovSinCos) {
     let gaussianTan = cameraPos.xy / cameraPos.z;
     let cameraTan = halfFovSinCos.xz / halfFovSinCos.yw;
@@ -74,10 +56,6 @@ float2x2 compute2dCovariance(float3 scale, float4 quaternion, no_diff float3x3 v
     return mul(jw, mul(sigma, transpose(jw)));
 }
 
-bool isValidFloat<T, let n : int>(vector<T, n> x) where T : __BuiltinFloatingPointType {
-    return all(!isnan(x) && !isinf(x));
-}
-
 int countIntersections(float2 screenPos, float3 covariances, int2 tilesXY) {
     let halfSize = 3. * sqrt(covariances.xy);
     let minPos = screenPos - halfSize;
@@ -99,26 +77,6 @@ float3 getCameraCenter(float3x4 extrinsics) {
 [Differentiable]
 float3 getDirection(no_diff float3 from, float3 to) {
     return normalize(to - from);
-}
-
-namespace ShNorm {
-    static const float N0 = 0.28209479177387814;
-    
-    static const float N1 = 0.4886025119029199;
-    
-    static const float N2_m2 = 1.0925484305920792;
-    static const float N2_m1 = -1.0925484305920792;
-    static const float N2_0 = 0.31539156525252005;
-    static const float N2_p1 = -1.0925484305920792;
-    static const float N2_p2 = 0.5462742152960396;
-    
-    static const float N3_m3 = -0.5900435899266435;
-    static const float N3_m2 = 2.890611442640554;
-    static const float N3_m1 = -0.4570457994644658;
-    static const float N3_0 = 0.3731763325901154;
-    static const float N3_p1 = -0.4570457994644658;
-    static const float N3_p2 = 1.445305721320277;
-    static const float N3_p3 = -0.5900435899266435;
 }
 
 [BackwardDerivative(computeColorBwd)]
@@ -324,17 +282,6 @@ bool isCulled(float3 cameraPos, float3 scales, float4 halfFovSinCos, float2 near
     return false;
 }
 
-// [ a b ]
-// [ c d ]
-float2 compute2x2Eigenvalues(float2x2 M) {
-    let aMd = M._11 - M._22;
-    let discrim = aMd * aMd + 4 * M._12 * M._21;
-    let aPdHalf = (M._11 + M._22) / 2.;
-    let discrimRootHalf = sqrt(discrim) / 2.;
-
-    return float2(aPdHalf + discrimRootHalf, aPdHalf - discrimRootHalf);
-}
-
 [BackwardDerivative(projectGaussiansBwd)]
 void projectGaussians(
     uint idx,
@@ -536,20 +483,6 @@ void createGaussianInstances(
     }
 }
 
-void findTileRangesNoShuffle(uint idx, uint keyCount, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges) {
-    let lastIdx = keyCount - 2;
-    if (idx > lastIdx) return;
-    
-    let nextIdx = idx + 1;
-    let prevTileId = extractTileId(keys[idx]);
-    let nextTileId = extractTileId(keys[nextIdx]);
-    if (idx == 0) ranges[prevTileId, 0] = 0;
-    if (idx == lastIdx) ranges[nextTileId, 1] = keyCount;
-    if (prevTileId == nextTileId) return;
-    ranges[prevTileId, 1] = nextIdx;
-    ranges[nextTileId, 0] = nextIdx;
-}
-
 void findTileRanges(uint idx, uint keyCount, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges) {
     if (idx >= keyCount) return;
 
@@ -587,10 +520,6 @@ uint2 getPixelCoords(uint localThreadId, uint tileId, int tilesAlongX) {
     let localPixelX = localThreadId % TILE_SIZE;
     let localPixelY = localThreadId / TILE_SIZE;
     return uint2(tileX * TILE_SIZE + localPixelX, tileY * TILE_SIZE + localPixelY);
-}
-
-T sigmoid<T>(T x) where T: __BuiltinFloatingPointType {
-    return T(1.) / (T(1.) + exp(-x));
 }
 
 void loadGaussianIntoSharedMemory(int gaussianIdx, int storeIdx, IDiffTensor<float, 2> means, IDiffTensor<float, 2> covariances, IDiffTensor<float, 2> colors, IDiffTensor<float, 1> opacities) {
