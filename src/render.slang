@@ -358,8 +358,7 @@ void projectGaussians(
     WDiffTensor<float, 2> colors,
     TensorView<int> counts,
     TensorView<bool> areColorsClamped,
-    TensorView<float> gaussianImageRadii,
-    TensorView<int> viewCounters)
+    TensorView<float> gaussianImageRadii)
 {
     if (idx >= worldPositions.shape[0]) return;
 
@@ -418,7 +417,6 @@ void projectGaussians(
     if (!collectDensificationData) return;
     let gaussianImageRadius = 3. * sqrt(compute2x2Eigenvalues(covarianceMat).x);
     gaussianImageRadii[idx] = max(gaussianImageRadii[idx], gaussianImageRadius);
-    viewCounters[idx] = viewCounters[idx] + 1;
 }
 
 void projectGaussiansBwd(
@@ -443,8 +441,7 @@ void projectGaussiansBwd(
     WDiffTensor<float, 2> colors,
     TensorView<int> counts,
     TensorView<bool> areColorsClamped,
-    TensorView<float> gaussianImageRadii,
-    TensorView<int> viewCounters)
+    TensorView<float> gaussianImageRadii)
 {
     if (!saveBackpropData || idx >= worldPositions.shape[0]) return;
     if (counts[idx] <= 0) return;
@@ -490,6 +487,13 @@ void projectGaussiansBwd(
     scales._grad_out[idx, 0] += scaleGrad.x;
     scales._grad_out[idx, 1] += scaleGrad.y;
     scales._grad_out[idx, 2] += scaleGrad.z;
+}
+
+void incrementViewCounters(uint idx, int gaussianCount, IRWTensor<int, 1> viewCounters, ITensor<int, 1> counts) {
+    if (idx >= gaussianCount) return;
+    if (counts[idx] <= 0) return;
+
+    viewCounters[idx] = viewCounters[idx] + 1;
 }
 
 void createGaussianInstances(

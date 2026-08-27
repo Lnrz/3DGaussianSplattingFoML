@@ -35,6 +35,7 @@ class RenderContext:
 
     shader_module: spy.Module
     project: spy.Function
+    increment_view_counters: spy.Function
     create_instances_and_keys: spy.Function
     find_tile_ranges: spy.Function
     render: spy.Function
@@ -49,7 +50,7 @@ class RenderContext:
         tiles = data.ScreenTiles.from_screensize(screensize, tile_size, device) if screensize is not None else None
         instances = data.GaussiansInstances.from_size(gaussian_num, device=device)
         
-        ctx = cls(projections, instances, tiles, exponential_resizing, slang_module, None, None, None, None, tile_size, block_size, device)
+        ctx = cls(projections, instances, tiles, exponential_resizing, slang_module, None, None, None, None, None, tile_size, block_size, device)
         ctx.__create_functions()
 
         return ctx
@@ -80,6 +81,7 @@ class RenderContext:
 
     def __create_functions(self):
         self.project = self.shader_module.projectGaussians.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.block_size))
+        self.increment_view_counters = self.shader_module.incrementViewCounters.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.block_size))
         self.create_instances_and_keys = self.shader_module.createGaussianInstances.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.block_size))
         self.find_tile_ranges = self.shader_module.findTileRanges.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.block_size))
         self.render = self.shader_module.renderGaussians.constants({"TILE_SIZE":self.tile_size}).call_group_shape(spy.slangpy.Shape(self.tile_size, self.tile_size))
@@ -201,8 +203,9 @@ def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOp
                 ctx.tiles.tiles_xy, cam.intrinsics, cam.half_fov_sin_cos, cam.extrinsics, opts.nearFar,
                 gs.use_scale_exponential, gs.color_bias, opts.max_sh_degree, opts.save_data_for_backprop, opts.collect_data_for_densification,
                 ctx.projections.means, ctx.projections.depths, ctx.projections.covariances, ctx.projections.colors, ctx.instances.counts,
-                backprop_data.are_colors_clamped, densif_data.gaussian_image_radii, densif_data.view_counters)
+                backprop_data.are_colors_clamped, densif_data.gaussian_image_radii)
     if opts.collect_data_for_densification:
+        ctx.increment_view_counters(spy.grid((gs.num,)), gs.num, densif_data.view_counters, ctx.instances.counts)
         ctx.projections.means.retain_grad()
 
     torch.cumsum(ctx.instances.counts[:gs.num], dim=0, out=ctx.instances.cumulative_counts[:gs.num])
