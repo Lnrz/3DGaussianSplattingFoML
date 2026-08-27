@@ -8,10 +8,9 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.transforms import v2
 from torchmetrics.functional.image import peak_signal_noise_ratio, structural_similarity_index_measure, learned_perceptual_image_patch_similarity
-import slangpy as spy
 
-import data
-import render
+import splatgs
+from splatgs.slang import slang_optim_str_to_enum, slang_fp_mode_str_to_enum
 
 
 class ValidationNode:
@@ -78,7 +77,7 @@ class ValidationNode:
         parent_paths = self.parent.get_full_paths()
         return (parent_paths[0] / self.path_part, parent_paths[1] / self.path_part)
 
-    def validate(self, ctx: render.RenderContext, opts: dict={}, workers: int=0, pin_memory: bool=True):
+    def validate(self, ctx: splatgs.render.RenderContext, opts: dict={}, workers: int=0, pin_memory: bool=True):
         self.factor = opts.get(self.path_part, {}).get("factor", 1 if self.parent is None else self.parent.factor)
         self.background = opts.get(self.path_part, {}).get("background", [.0, .0, .0] if self.parent is None else self.parent.background)
 
@@ -94,11 +93,11 @@ class ValidationNode:
             reconstruction_path, model_path = self.get_full_paths()
             model_path = model_path.with_suffix(".ply")
 
-            gaussians = data.Gaussians3D.from_ply(model_path)
-            ds = data.CalibratedImages.from_colmap(
+            gaussians = splatgs.gs_from_ply(model_path)
+            ds = splatgs.ds_from_colmap(
                 reconstruction_path / "sparse/0",
                 reconstruction_path / "images",
-                v2.ToDtype(torch.float32, True) if self.factor == 1 else v2.Compose([data.DownsampleCalibratedImage(self.factor), v2.ToDtype(torch.float32, scale=True)])
+                v2.ToDtype(torch.float32, True) if self.factor == 1 else v2.Compose([splatgs.DownsampleCalibratedImage(self.factor), v2.ToDtype(torch.float32, scale=True)])
             )
             _, ds_test = ds.split_train_test()
             dl = DataLoader(ds_test, num_workers=workers, pin_memory=pin_memory)
@@ -106,7 +105,7 @@ class ValidationNode:
             psnrs = []
             ssims = []
             lpipss = []
-            render_opts = render.RenderOptions(background_color=self.background)
+            render_opts = splatgs.RenderOptions(background_color=self.background)
             for i, (gt_img, intr, hfsc, extr) in enumerate(dl):
                 print(f"Processing image {i+1}/{len(dl)} of {reconstruction_path}", end="\r")
                 gt_img = gt_img.to(device="cuda", non_blocking=pin_memory)
@@ -114,9 +113,9 @@ class ValidationNode:
                 hfsc = hfsc.to(device="cuda", non_blocking=pin_memory)
                 extr = extr.to(device="cuda", non_blocking=pin_memory)
                 h, w = gt_img.shape[-2:]
-                cam = render.Camera((w,h), intr, hfsc, extr)
+                cam = splatgs.Camera((w,h), intr, hfsc, extr)
 
-                pred_img = render.render(gaussians, cam, ctx, render_opts)[0]
+                pred_img = splatgs.render_gaussians(gaussians, cam, ctx, render_opts)[0]
                 pred_img.clamp_(0., 1.)
                 pred_img = pred_img.permute(2, 0, 1)
                 pred_img = pred_img.unsqueeze_(0)
@@ -162,19 +161,6 @@ class DictPairAction(argparse.Action):
                 parser.error(f"argument --{self.dest}: pair '{string}' is ill-formed. Correct format is 'key=value' or 'key:value'.\n{e}")
 
 
-slang_optim_str_to_enum = {
-    "none" : spy.SlangOptimizationLevel.none,
-    "default" : spy.SlangOptimizationLevel.default,
-    "high" : spy.SlangOptimizationLevel.high,
-    "maximal" : spy.SlangOptimizationLevel.maximal
-}
-
-slang_fp_mode_str_to_enum = {
-    "fast" : spy.SlangFloatingPointMode.fast,
-    "default" : spy.SlangFloatingPointMode.default,
-    "precise" : spy.SlangFloatingPointMode.precise
-}
-
 def str_to_color(string: str):
     color = re.split(",", string, maxsplit=2)
     if len(color) != 3:
@@ -183,6 +169,7 @@ def str_to_color(string: str):
     color = [float(channel) for channel in color]
 
     return color
+
 
 def get_args():
     parser = argparse.ArgumentParser(description="A script to validate Gaussian models")
@@ -213,8 +200,8 @@ def get_args():
         parser.error(f"'block-size' must be at least 1, was {args.block_size}")
 
     args.workers = max(-1, args.workers)
-    args.optim = slang_optim_str_to_enum[args.optim]
-    args.fp_mode = slang_fp_mode_str_to_enum[args.fp_mode]
+    args.optim = slang_optim_str_to_enum(args.optim)
+    args.fp_mode = slang_fp_mode_str_to_enum(args.fp_mode)
     args.opts = {}
     for dataset, factor in args.factors.items():
         if args.opts.get(dataset) is None:
@@ -232,9 +219,9 @@ def get_args():
 
 def main():
     args = get_args()
-    slang_device = render.create_slangpy_device_for_torch(fp_mode=args.fp_mode, optimization_level=args.optim, include_paths=[str(Path(__file__).parent)])
-    render_module = spy.Module.load_from_file(slang_device, "render.slang")
-    ctx = render.RenderContext.from_settings(1, args.tile_size, args.block_size, render_module)
+    slang_device = splatgs.create_slang_device(fp_mode=args.fp_mode, optimization_level=args.optim)
+    render_module = splatgs.load_render_module(slang_device)
+    ctx = splatgs.ctx(1, args.tile_size, args.block_size, render_module)
 
     root = ValidationNode.root(args.datasets, args.models)
     root.validate(ctx, args.opts, args.workers, not args.disable_pin)

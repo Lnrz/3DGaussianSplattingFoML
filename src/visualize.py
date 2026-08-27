@@ -1,18 +1,24 @@
-import data
-import render
-import torch
-import slangpy as spy
-import taichi as ti
-import numpy as np
 from collections.abc import Sequence
 import argparse
 import pathlib
 import time
-import colorama
 import re
+
+import colorama
+import numpy as np
+import torch
+import taichi as ti
+
+import splatgs
+from splatgs.slang import (
+    slang_fp_mode_str_to_enum, slang_fp_mode_enum_to_str,
+    slang_optim_str_to_enum, slang_optim_enum_to_str
+)
+
 
 colorama.init()
 ti.init(arch=ti.cuda)
+
 
 DATA_DIR = pathlib.Path(__file__).parent.parent / "data"
 ERASE_LINE = "\033[K"
@@ -88,7 +94,6 @@ class PovCamera:
         return np.array([right_dir, up_dir, forward_dir])
 
 
-
 def resolve_model_path(input_str: str):
     input_path = pathlib.Path(input_str)
     if input_path.exists():
@@ -108,23 +113,6 @@ def resolve_model_path(input_str: str):
         raise ValueError(err_msg)
 
     return matches[0]
-
-
-slang_fp_mode_str_to_enum = {
-    "fast" : spy.SlangFloatingPointMode.fast,
-    "default" : spy.SlangFloatingPointMode.default,
-    "precise" : spy.SlangFloatingPointMode.precise
-}
-slang_fp_mode_enum_to_str = {enum : string for string, enum in slang_fp_mode_str_to_enum.items()}
-
-slang_optim_str_to_enum = {
-    "none" : spy.SlangOptimizationLevel.none,
-    "default" : spy.SlangOptimizationLevel.default,
-    "high" : spy.SlangOptimizationLevel.high,
-    "maximal" : spy.SlangOptimizationLevel.maximal
-}
-slang_optim_enum_to_str = {enum : string for string, enum in slang_optim_str_to_enum.items()}
-
 
 
 def get_arguments():
@@ -172,10 +160,11 @@ def get_arguments():
     if args.near_far[1] <= args.near_far[0]:
         parser.error(f"Near plane can't be further than far plane, was {args.near_far}.")
 
-    args.fp_mode = slang_fp_mode_str_to_enum[args.fp_mode]
-    args.optim = slang_optim_str_to_enum[args.optim]
+    args.fp_mode = slang_fp_mode_str_to_enum(args.fp_mode)
+    args.optim = slang_optim_str_to_enum(args.optim)
 
     return args
+
 
 def get_intrinsics_and_hfsc(width: int, height: int, fov_x: float):
     fov_x = np.deg2rad(fov_x)
@@ -192,7 +181,6 @@ move_mapping = [
     (["q",  ti.ui.SHIFT], (1,1)), (["e", ti.ui.SPACE], (1,-1)),
     ("s", (2,-1)), ("w", (2,1))
 ]
-
 rotation_mapping = [
     (ti.ui.LEFT, (PovCamera.rotate_right, -1)),
     (ti.ui.RIGHT, (PovCamera.rotate_right, 1)),
@@ -200,7 +188,8 @@ rotation_mapping = [
     (ti.ui.UP, (PovCamera.rotate_up, 1))
 ]
 
-def handle_input(window: ti.ui.Window, povCam: PovCamera, cam: render.Camera, movement_speed: float, rotation_speed: float):
+
+def handle_input(window: ti.ui.Window, povCam: PovCamera, cam: splatgs.Camera, movement_speed: float, rotation_speed: float):
     delta = np.zeros((3,), dtype=np.float64)
     update_view_matrix = False
 
@@ -226,6 +215,7 @@ def handle_input(window: ti.ui.Window, povCam: PovCamera, cam: render.Camera, mo
         povCam.move(delta)
         cam.extrinsics = povCam.view_matrix()
 
+
 def get_cli_input(message:str, before_input: str=">>> ", types: type | Sequence[type]=str):
     print(message)
     input_string = input(before_input)
@@ -241,34 +231,24 @@ def get_cli_input(message:str, before_input: str=">>> ", types: type | Sequence[
     return [to_type(input_part) for input_part, to_type in zip(inputs, types)]
 
 
-
 def main():
     args = get_arguments()
     model_path = args.model
-    initial_position = args.initial_position
     movement_speed = args.movement_speed
     rotation_speed = args.rotation_speed
     width = args.screen_size[0]
     height = args.screen_size[1] if len(args.screen_size) > 1 else width
     screen_size = (width, height)
-    tile_size = args.tile_size
-    block_size = args.block_size
-    max_sh_degree = args.max_sh_degree
     fov_x = args.fovx
-    near_far = args.near_far
-    exponential_resize = args.exponential_resize
-    fp_mode = args.fp_mode
-    optim_lvl = args.optim
-    shaders_path = R"src/render.slang"
 
-    gaussians = data.Gaussians3D.from_ply(model_path)
-    slang_device = render.create_slangpy_device_for_torch(fp_mode=fp_mode, optimization_level=optim_lvl)
-    render_module = spy.Module.load_from_file(slang_device, shaders_path)
-    ctx = render.RenderContext.from_settings(gaussians.num, tile_size, block_size, render_module, screen_size, exponential_resize)
-    opts = render.RenderOptions(max_sh_degree=max_sh_degree, nearFar=near_far)
+    gaussians = splatgs.gs_from_ply(model_path)
+    slang_device = splatgs.create_slang_device(fp_mode=args.fp_mode, optimization_level=args.optim)
+    render_module = splatgs.load_render_module(slang_device)
+    ctx = splatgs.ctx(gaussians.num, args.tile_size, args.block_size, render_module, screen_size, args.exponential_resize)
+    opts = splatgs.RenderOptions(max_sh_degree=args.max_sh_degree, nearFar=args.near_far)
     intrinsics, hfsc = get_intrinsics_and_hfsc(width, height, fov_x)
-    povCam = PovCamera(initial_position)
-    cam = render.Camera(screen_size, intrinsics, hfsc, povCam.view_matrix())
+    povCam = PovCamera(args.initial_position)
+    cam = splatgs.Camera(screen_size, intrinsics, hfsc, povCam.view_matrix())
     img = torch.empty((height, width, 3), dtype=torch.float32, device="cuda")
 
     img_ti = ti.field(ti.f32, (width, height, 3))
@@ -284,7 +264,7 @@ def main():
         prev_time = curr_time
 
         handle_input(window, povCam, cam, movement_speed*delta_time, rotation_speed*delta_time)
-        render.render(gaussians, cam, ctx, opts, img)
+        splatgs.render_gaussians(gaussians, cam, ctx, opts, img)
         img_ti.from_torch(img.clamp_(0., 1.).flip(0).transpose(0,1))
         canvas.set_image(img_ti)
 
@@ -332,15 +312,15 @@ def main():
             info_gui.text(f"Near far planes: ({opts.nearFar[0]},{opts.nearFar[1]})")
             ctx.exponential_resizing = info_gui.checkbox("Exponential memory resize", ctx.exponential_resizing)
             info_gui.text(sep_str)
-            info_gui.text(f"Floating point mode: {slang_fp_mode_enum_to_str[fp_mode]}")
-            info_gui.text(f"Optimization level: {slang_optim_enum_to_str[optim_lvl]}")
+            info_gui.text(f"Floating point mode: {slang_fp_mode_enum_to_str(args.fp_mode)}")
+            info_gui.text(f"Optimization level: {slang_optim_enum_to_str(args.optim)}")
             info_gui.text(sep_str)
             info_gui.text(cli_input_notice)
             if info_gui.button("Change model"):
                 new_path = get_cli_input("Input model")
                 try:
                     new_path = resolve_model_path(new_path)
-                    gaussians = data.Gaussians3D.from_ply(new_path)
+                    gaussians = splatgs.gs_from_ply(new_path)
                     model_path = new_path
                 except Exception as e:
                     print(e)
@@ -367,7 +347,6 @@ def main():
                     print(e)
 
         window.show()
-
 
 
 if __name__ == "__main__":

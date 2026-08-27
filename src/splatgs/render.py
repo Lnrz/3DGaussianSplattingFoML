@@ -5,15 +5,8 @@ import numpy as np
 import torch
 import slangpy as spy
 
-import data
+from splatgs import gauss, image
 
-
-@dataclass
-class Camera:
-    screensize: Sequence[int]
-    intrinsics: torch.Tensor
-    half_fov_sin_cos: torch.Tensor
-    extrinsics: torch.Tensor
 
 @dataclass
 class RenderOptions:
@@ -26,11 +19,12 @@ class RenderOptions:
     save_data_for_backprop: bool=False
     collect_data_for_densification: bool=False
 
+
 @dataclass
 class RenderContext:
-    projections: data.ProjectedGaussians
-    instances: data.GaussiansInstances
-    tiles: data.ScreenTiles
+    projections: gauss.ProjectedGaussians
+    instances: gauss.GaussiansInstances
+    tiles: image.ScreenTiles
     exponential_resizing: bool
 
     shader_module: spy.Module
@@ -46,9 +40,9 @@ class RenderContext:
 
     @classmethod
     def from_settings(cls, gaussian_num: int, tile_size: int, block_size: int, slang_module: spy.Module, screensize: Sequence[int] | None=None, exponential_resizing: bool=False, device="cuda"):
-        projections = data.ProjectedGaussians.from_size(gaussian_num, device)
-        tiles = data.ScreenTiles.from_screensize(screensize, tile_size, device) if screensize is not None else None
-        instances = data.GaussiansInstances.from_size(gaussian_num, device=device)
+        projections = gauss.ProjectedGaussians.from_size(gaussian_num, device)
+        tiles = image.ScreenTiles.from_screensize(screensize, tile_size, device) if screensize is not None else None
+        instances = gauss.GaussiansInstances.from_size(gaussian_num, device=device)
         
         ctx = cls(projections, instances, tiles, exponential_resizing, slang_module, None, None, None, None, None, tile_size, block_size, device)
         ctx.__create_functions()
@@ -71,7 +65,7 @@ class RenderContext:
         if self.tiles is not None:
             self.tiles.ensure_capacity(screensize, self.tile_size)
         else:
-            self.tiles = data.ScreenTiles.from_screensize(screensize, self.tile_size, self.device)
+            self.tiles = image.ScreenTiles.from_screensize(screensize, self.tile_size, self.device)
     
     def allocate_instances(self, gaussian_num: int):
         self.instances.allocate_instances(self.instances.cumulative_counts[gaussian_num-1].item(), self.exponential_resizing)
@@ -151,39 +145,11 @@ class DensificationData:
         self.view_counters.zero_()
 
 
-def create_slangpy_device_for_torch(type: spy.DeviceType=spy.DeviceType.cuda, include_paths=[], torch_device=None,
-                          fp_mode: spy.SlangFloatingPointMode=spy.SlangFloatingPointMode.default,
-                          optimization_level: spy.SlangOptimizationLevel=spy.SlangOptimizationLevel.default,
-                          debug_info: spy.SlangDebugInfoLevel = spy.SlangDebugInfoLevel.standard,
-                          enable_debug_layers: bool=False,
-                          enable_print: bool=False):
-    torch.cuda.init()
-    torch.cuda.current_device()
-    torch.cuda.current_stream()
-    if torch_device is None:
-        torch_device = torch.cuda.current_device()
-    with torch.device(torch_device):
-        handles = spy.get_cuda_current_context_native_handles()
-
-    return spy.Device(
-        type=type,
-        compiler_options= {
-            "include_paths": [spy.SHADER_PATH] + include_paths,
-            "floating_point_mode" : fp_mode,
-            "optimization" : optimization_level,
-            "disable_warnings" : ["31000"], # warning about shared memory array of link-time constant length being experimental
-            "debug_info" : debug_info,
-        },
-        enable_debug_layers=enable_debug_layers,
-        enable_print=enable_print,
-        enable_cuda_interop=(type != spy.DeviceType.cuda),
-        existing_device_handles=handles,
-    )
-
 def nearest_multiple(values: np.ndarray, multiple: int):
     return (values + multiple - 1) // multiple * multiple
 
-def render(gs: data.Gaussians3D, cam: Camera, ctx: RenderContext, opts: RenderOptions=None, image: torch.Tensor | None=None, backprop_data: BackpropagationData | None=None, densif_data: DensificationData | None=None):
+
+def render(gs: gauss.Gaussians3D, cam: image.Camera, ctx: RenderContext, opts: RenderOptions=None, image: torch.Tensor | None=None, backprop_data: BackpropagationData | None=None, densif_data: DensificationData | None=None):
     opts = opts if isinstance(opts, RenderOptions) else RenderOptions()
     image = image if isinstance(image, torch.Tensor) else torch.empty((cam.screensize[1], cam.screensize[0], 3), dtype=torch.float32, device=ctx.device)
     backprop_data = backprop_data if isinstance(backprop_data, BackpropagationData) else BackpropagationData.dummy()

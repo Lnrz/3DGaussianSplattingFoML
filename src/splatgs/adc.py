@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import slangpy as spy
 
-import data
+from splatgs import gauss
 
 
 @dataclass
@@ -54,7 +54,7 @@ class AdaptiveDensityControl:
     def accumulate_gradients(self, gradients: torch.Tensor, scales: Sequence[float] | None=None):
         self.accumulate_norms(spy.grid(self.accumulated_norms.shape), self.accumulated_norms, gradients, scales if scales is not None else [1., 1.])
 
-    def adapt_density(self, gs: data.Gaussians3D, gs_view_counters: torch.Tensor, gs_img_radii: torch.Tensor, reset_opacity: bool=False):
+    def adapt_density(self, gs: gauss.Gaussians3D, gs_view_counters: torch.Tensor, gs_img_radii: torch.Tensor, reset_opacity: bool=False):
         counts = torch.empty(gs.num, dtype=torch.int32, device=self.accumulated_norms.device)
         cumulative_counts = torch.empty_like(counts)
         with torch.no_grad():
