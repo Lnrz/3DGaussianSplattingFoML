@@ -157,7 +157,7 @@ def main():
     backprop_data = splatgs.BackpropagationData.from_settings(gaussians.num, ds.max_image_size)
     densif_data = splatgs.DensificationData.dummy()
     opts = splatgs.RenderOptions(max_sh_degree=args.starting_sh_degrees, background_color=args.bg_color, save_data_for_backprop=True, collect_data_for_densification=first_densification_iter<=0)
-    max_width, max_height = ds.max_image_size
+    max_width, max_height = ds.max_image_size // min(args.factors)
     out_image = torch.zeros((max_height, max_width, 3), dtype=torch.float32, device="cuda")
 
     density_control = splatgs.adaptive_density_control(
