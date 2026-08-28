@@ -213,7 +213,7 @@ def main():
                 out_image_view = out_image_view.permute(2,0,1) # from (H,W,C) to (C,H,W)
                 out_image_view = out_image_view.clamp(0.,1.)
                 l1 = F.l1_loss(out_image_view, gt_image[0])
-                ssim = structural_similarity_index_measure(out_image_view.unsqueeze(0), gt_image) # parameters need batch dimension (B,C,H,W)
+                ssim = structural_similarity_index_measure(out_image_view.unsqueeze(0), gt_image, data_range=1.) # parameters need batch dimension (B,C,H,W)
                 ldssim = (1. - ssim) / 2.
                 loss = l1 * (1. - args.dssim_weight) + ldssim * args.dssim_weight
                 loss.backward()
