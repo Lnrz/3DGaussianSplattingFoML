@@ -16,7 +16,7 @@ import splatgs
 from splatgs.slang import slang_optim_str_to_enum, slang_fp_mode_str_to_enum
 
 
-def update_optim_state(optim: Optimizer, gaussians: splatgs.gauss.Gaussians3D, old_state_input_indices: torch.Tensor, new_state_output_indices: torch.Tensor):
+def update_optim_state(optim: Optimizer, gaussians: splatgs.gauss.Gaussians3D, kept_gaussian_old_indices: torch.Tensor, kept_gaussian_new_indices: torch.Tensor):
     new_datas = [
         gaussians.means,
         gaussians.rotations,
@@ -32,11 +32,11 @@ def update_optim_state(optim: Optimizer, gaussians: splatgs.gauss.Gaussians3D, o
         new_exp_avg = torch.zeros_like(new_data)
         new_exp_avg_sq = torch.zeros_like(new_data)
         if i != 4:
-            new_exp_avg[new_state_output_indices] = old_state["exp_avg"][old_state_input_indices]
-            new_exp_avg_sq[new_state_output_indices] = old_state["exp_avg_sq"][old_state_input_indices]
+            new_exp_avg[kept_gaussian_new_indices] = old_state["exp_avg"][kept_gaussian_old_indices]
+            new_exp_avg_sq[kept_gaussian_new_indices] = old_state["exp_avg_sq"][kept_gaussian_old_indices]
         else:
-            new_exp_avg[:, new_state_output_indices] = old_state["exp_avg"][:, old_state_input_indices]
-            new_exp_avg_sq[:, new_state_output_indices] = old_state["exp_avg_sq"][:, old_state_input_indices]
+            new_exp_avg[:, kept_gaussian_new_indices] = old_state["exp_avg"][:, kept_gaussian_old_indices]
+            new_exp_avg_sq[:, kept_gaussian_new_indices] = old_state["exp_avg_sq"][:, kept_gaussian_old_indices]
 
         optim.param_groups[i]["params"][0] = new_data
         optim.state[new_data] = {
@@ -247,16 +247,16 @@ def main():
                 if is_densification_enabled:
                         if opts.collect_data_for_densification:
                             density_control.accumulate_gradients(ctx.projections.means.grad[:gaussians.num], [w / 2., h / 2.]) # the scales convert the gradient from pixel coordinates to NDC
-                            
+
                             empty_cache = False
                             if curr_iter % args.densification_interval == 0:
                                 empty_cache = True
                                 old_num = gaussians.num
                                 reset_opacity = is_opacity_reset_enabled and ((curr_iter % args.opac_reset_interval) == 0)
 
-                                in_indices, out_indices = density_control.adapt_density(gaussians, densif_data.view_counters, densif_data.gaussian_image_radii, reset_opacity)
-                                update_optim_state(optim, gaussians, in_indices, out_indices)
-                                del in_indices, out_indices
+                                ketp_gaussian_old_indices, kept_gaussian_new_indices = density_control.adapt_density(gaussians, densif_data.view_counters, densif_data.gaussian_image_radii, reset_opacity)
+                                update_optim_state(optim, gaussians, ketp_gaussian_old_indices, kept_gaussian_new_indices)
+                                del ketp_gaussian_old_indices, kept_gaussian_new_indices
 
                                 if gaussians.num <= old_num:
                                     densif_data.zero()

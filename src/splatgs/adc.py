@@ -57,6 +57,7 @@ class AdaptiveDensityControl:
     def adapt_density(self, gs: gauss.Gaussians3D, gs_view_counters: torch.Tensor, gs_img_radii: torch.Tensor, reset_opacity: bool=False):
         counts = torch.empty(gs.num, dtype=torch.int32, device=self.accumulated_norms.device)
         cumulative_counts = torch.empty_like(counts)
+        are_kept = torch.zeros(gs.num, dtype=torch.bool, device=self.accumulated_norms.device)
         with torch.no_grad():
             self.count_copies(spy.grid((gs.num,)),
                               self.accumulated_norms, gs_view_counters, gs.scales, gs.opacities, gs_img_radii,
@@ -66,8 +67,6 @@ class AdaptiveDensityControl:
                               self.image_radius_threshold,
                               counts)
             torch.cumsum(counts, dim=0, out=cumulative_counts)
-            old_state_input_indices = torch.nonzero(counts == 1)
-            new_state_output_indices = cumulative_counts[old_state_input_indices] - 1
 
             new_size = cumulative_counts[-1].item()
             new_means = torch.empty((new_size,3), dtype=gs.means.dtype, device=gs.means.device)
@@ -80,7 +79,7 @@ class AdaptiveDensityControl:
                                counts, cumulative_counts,
                                gs.means, gs.rotations, gs.scales, gs.sh_coefficients, gs.opacities,
                                gs.use_scale_exponential, self.scale_threshold, self.split_factor, reset_opacity, self.opacity_reset_value if not gs.use_opacity_sigmoid else np.log(self.opacity_reset_value / (1. - self.opacity_reset_value)),
-                               new_means, new_rotations, new_scales, new_sh_coefficients, new_opacities)
+                               new_means, new_rotations, new_scales, new_sh_coefficients, new_opacities, are_kept)
 
         gs.num = new_size
         gs.means = new_means
@@ -91,4 +90,6 @@ class AdaptiveDensityControl:
         gs.set_autograd()
         self.accumulated_norms = torch.zeros(new_size, dtype=self.accumulated_norms.dtype, device=self.accumulated_norms.device)
 
-        return old_state_input_indices, new_state_output_indices
+        kept_gaussian_old_indices = torch.nonzero(are_kept)
+        kept_gaussian_new_indices = cumulative_counts[kept_gaussian_old_indices] - 1
+        return kept_gaussian_old_indices, kept_gaussian_new_indices

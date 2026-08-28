@@ -104,8 +104,11 @@ void createCopies(uint idx, uint64_t seed,
     IWTensor<float, 2> outRotations,
     IWTensor<float, 2> outScales,
     IWTensor<float, 3> outShCoefs,
-    IWTensor<float, 1> outOpacities)
+    IWTensor<float, 1> outOpacities,
+    IWTensor<bool, 1> areKept)
 {
+    if (idx >= inMeans.shape[0]) return;
+
     let copiesNum = counts[idx];
     if (copiesNum == 0) return;
     let offset = cumCounts[idx] - copiesNum;
@@ -115,12 +118,14 @@ void createCopies(uint idx, uint64_t seed,
     let storedScale = float3(inScales[idx, 0], inScales[idx, 1], inScales[idx, 2]);
     let opacity = resetOpacity ? opacityResetValue : inOpacities[idx];
     if (copiesNum == 1) {
+        areKept[idx] = true;
         copyGaussian(idx, offset, mean, rotation, storedScale, opacity, inShCoefs, outMeans, outRotations, outScales, outShCoefs, outOpacities);
         return;
     }
 
     let scale = useExp ? exp(storedScale) : storedScale;
     if (max(scale.x, max(scale.y, scale.z)) <= scaleThreshold) {
+        areKept[idx] = true;
         copyGaussian(idx, offset, mean, rotation, storedScale, opacity, inShCoefs, outMeans, outRotations, outScales, outShCoefs, outOpacities);
         copyGaussian(idx, offset + 1, mean, rotation, storedScale, opacity, inShCoefs, outMeans, outRotations, outScales, outShCoefs, outOpacities);
     } else {
