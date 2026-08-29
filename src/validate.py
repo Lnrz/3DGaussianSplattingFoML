@@ -16,50 +16,30 @@ from splatgs.slang import slang_optim_str_to_enum, slang_fp_mode_str_to_enum
 class ValidationNode:
 
     @classmethod
-    def root(cls, reconstructions_path: str | Path, models_path: str | Path):
-        reconstructions_path = reconstructions_path if isinstance(reconstructions_path, Path) else Path(reconstructions_path)
-        models_path = models_path if isinstance(models_path, Path) else Path(models_path)
-        root = cls()
-        root.parent = None
-        root.children = []
-        root.path_part = reconstructions_path.name
-        root.reconstruction_path_part = reconstructions_path
-        root.model_path_part = models_path
-        root.image_count = -1
-        root.psnr = -1.
-        root.ssim = -1.
-        root.lpips = -1.
+    def from_paths(cls, reconstructions_path: str | Path, models_path: str | Path | None=None, parent: Self | None=None):
+        if not isinstance(reconstructions_path, Path):
+            reconstructions_path = Path(reconstructions_path)
 
-        if not ValidationNode.is_colmap_folder(reconstructions_path):
-            for child_path in reconstructions_path.iterdir():
-                if child_path.is_file():
-                    continue
-                root.children.append(ValidationNode._child(root, child_path, models_path / child_path.name))
-
-        return root
-
-    @classmethod
-    def _child(cls, parent: Self, reconstructions_path: Path, models_path: Path):
         node = cls()
-        node.parent = parent
         node.children = []
         node.path_part = reconstructions_path.name
-        node.image_count = -1
-        node.psnr = -1.
-        node.ssim = -1.
-        node.lpips = -1.
+        node.is_root = parent is None
+        if node.is_root:
+            node.reconstructions_path_start = reconstructions_path
+            node.models_path_start = models_path if isinstance(models_path, Path) else Path(models_path) if models_path is not None else reconstructions_path
+        else:
+            node.parent = parent
 
-        if not node.is_colmap_folder(reconstructions_path):
+        is_colmap_folder = (reconstructions_path / "images").exists() and (reconstructions_path / "sparse/0").exists()
+        if not is_colmap_folder:
             for child_path in reconstructions_path.iterdir():
                 if child_path.is_file():
                     continue
-                node.children.append(ValidationNode._child(node, child_path, models_path / child_path.name))
+                child = ValidationNode.from_paths(child_path, parent=node)
+                if child is not None:
+                    node.children.append(child)
 
-        return node
-
-    @staticmethod
-    def is_colmap_folder(path: Path):
-        return (path / "images").exists() and (path / "sparse/0").exists()
+        return node if (is_colmap_folder or node.children) else None
 
     def print_validation(self, level: int=0, file=None):
         print(level * "    " +  f"{self.path_part}   [PSNR {self.psnr:.2f}   SSIM {self.ssim:.4f}   LPIPS {self.lpips:.4f}   IMAGE COUNT {self.image_count}]", file=file)
@@ -71,24 +51,33 @@ class ValidationNode:
             print(file=file)
 
     def get_full_paths(self):
-        if not self.parent:
-            return (self.reconstruction_path_part, self.model_path_part)
+        if self.is_root:
+            return (self.reconstructions_path_start, self.models_path_start)
 
         parent_paths = self.parent.get_full_paths()
         return (parent_paths[0] / self.path_part, parent_paths[1] / self.path_part)
 
-    def validate(self, ctx: splatgs.render.RenderContext, opts: dict={}, workers: int=0, pin_memory: bool=True):
-        self.factor = opts.get(self.path_part, {}).get("factor", 1 if self.parent is None else self.parent.factor)
-        self.background = opts.get(self.path_part, {}).get("background", [.0, .0, .0] if self.parent is None else self.parent.background)
+    def validate(self, ctx: splatgs.render.RenderContext, opts: dict={}, workers: int=0, pin_memory: bool=True, simple_mean: bool=False):
+        self.factor = opts.get(self.path_part, {}).get("factor", 1 if self.is_root else self.parent.factor)
+        self.background = opts.get(self.path_part, {}).get("background", [.0, .0, .0] if self.is_root else self.parent.background)
 
         for child in self.children:
             child.validate(ctx, opts, workers, pin_memory)
 
         if self.children:
             self.image_count = sum([child.image_count for child in self.children])
-            self.psnr = sum([child.psnr_sum for child in self.children]) / self.image_count
-            self.ssim = sum([child.ssim_sum for child in self.children]) / self.image_count
-            self.lpips = sum([child.lpips_sum for child in self.children]) / self.image_count
+            if not simple_mean:
+                self.psnr_sum = sum([child.psnr_sum for child in self.children])
+                self.ssim_sum = sum([child.ssim_sum for child in self.children])
+                self.lpips_sum = sum([child.lpips_sum for child in self.children])
+                self.psnr = self.psnr_sum / self.image_count
+                self.ssim = self.ssim_sum / self.image_count
+                self.lpips = self.lpips_sum / self.image_count
+            else:
+                children_count = len(self.children)
+                self.psnr = sum([child.psnr for child in self.children]) / children_count
+                self.ssim = sum([child.ssim for child in self.children]) / children_count
+                self.lpips = sum([child.lpips for child in self.children]) / children_count
         else:
             reconstruction_path, model_path = self.get_full_paths()
             model_path = model_path.with_suffix(".ply")
@@ -132,9 +121,10 @@ class ValidationNode:
             self.ssim = ssims.mean()
             self.lpips = lpipss.mean()
             self.image_count = len(dl)
-            self.psnr_sum = psnrs.sum()
-            self.ssim_sum = ssims.sum()
-            self.lpips_sum = lpipss.sum()
+            if not simple_mean:
+                self.psnr_sum = psnrs.sum()
+                self.ssim_sum = ssims.sum()
+                self.lpips_sum = lpipss.sum()
 
 
 class DictPairAction(argparse.Action):
@@ -174,8 +164,9 @@ def str_to_color(string: str):
 def get_args():
     parser = argparse.ArgumentParser(description="A script to validate Gaussian models")
     parser.add_argument("datasets", type=str, help="Path to the base directory containing all the validation datasets.")
-    parser.add_argument("models", type=str, help="Path to the base directory containing all the models to validate.")
-    parser.add_argument("-o", "--output", metavar="path", type=str, default="", help="Path where to save the metrics. The metrics will be printed to console if not specified.")
+    parser.add_argument("--models", metavar="path", type=str, default=None, help="Path to the base directory containing all the models to validate. If not specified will default to 'datasets'.")
+    parser.add_argument("-o", "--output", metavar="path", type=str, default="", help="Path where to save the metrics. If not specified the metrics will be printed to console.")
+    parser.add_argument("--simple-mean", action="store_true", help="Calculate unweighted mean across datasets, ignoring image counts.")
     parser.add_argument("--factors", metavar="dataset=factor", action=DictPairAction, value_type=int, nargs="+", default={}, help="Downscaling factors to apply to the datasets.")
     parser.add_argument("--backgrounds", metavar="dataset=r,g,b", action=DictPairAction, value_type=str_to_color, nargs="+", default={}, help="Background colors to use for rendering.")
     parser.add_argument("--workers", metavar="n", type=int, default=0, help="Number of workers to use in the validation loop. Default to 0.")
@@ -223,8 +214,10 @@ def main():
     render_module = splatgs.load_render_module(slang_device)
     ctx = splatgs.ctx(1, args.tile_size, args.block_size, render_module)
 
-    root = ValidationNode.root(args.datasets, args.models)
-    root.validate(ctx, args.opts, args.workers, not args.disable_pin)
+    root = ValidationNode.from_paths(args.datasets, args.models)
+    if root is None:
+        raise ValueError(f"No COLMAP reconstructions were found inside '{args.datasets}'.")
+    root.validate(ctx, args.opts, args.workers, not args.disable_pin, args.simple_mean)
 
     if args.output:
         with open(args.output, "a") as f:
