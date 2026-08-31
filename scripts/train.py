@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from torchmetrics.functional.image import structural_similarity_index_measure
 
 from script_utils import (
+    DATA_DIR,
     resolve_data_path,
     slang_optim_str_to_enum, slang_fp_mode_str_to_enum
 )
@@ -52,7 +53,7 @@ def update_optim_state(optim: Optimizer, gaussians: splatgs.gauss.Gaussians3D, k
 def get_arguments():
     parser = ArgumentParser(description="A script to train Gaussians models")
     parser.add_argument("reconstruction",type=str, help="Path to the COLMAP reconstrution to use as training data. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
-    parser.add_argument("-o", "--output", metavar="path", type=str, default="o.ply", help="Path where to save the trained model. Default to 'o.ply'.")
+    parser.add_argument("-o", "--output", metavar="path", type=str, default=str(DATA_DIR / "o.ply"), help="Path where to save the trained model. Default to 'data/o.ply'.")
     parser.add_argument("--preset30k", action="store_true", help="Use the 30k iterations preset. The default is the 7k iterations preset.")
     parser.add_argument("--seed", metavar="n", type=int, default=42, help="Seed for the Gaussian splitting PRNG. Default to 42.")
     parser.add_argument("--all-data", action="store_true", help="Add the validation set to the training data. The validation set comprises all images whose index is a multiple of 8.")
