@@ -15,7 +15,7 @@ class RenderOptions:
     alpha_thres: float = 1./255.
     max_alpha: float = 0.99
     min_transmittance : float = 0.0001
-    nearFar: Sequence[float] = field(default_factory=lambda: [0.2, 100])
+    near_far: Sequence[float] = field(default_factory=lambda: [0.2, 100])
     save_data_for_backprop: bool=False
     collect_data_for_densification: bool=False
 
@@ -151,22 +151,22 @@ def nearest_multiple(values: np.ndarray, multiple: int):
 
 def render(gs: gauss.Gaussians3D, cam: image.Camera, ctx: RenderContext, opts: RenderOptions=None, image: torch.Tensor | None=None, backprop_data: BackpropagationData | None=None, densif_data: DensificationData | None=None):
     opts = opts if isinstance(opts, RenderOptions) else RenderOptions()
-    image = image if isinstance(image, torch.Tensor) else torch.empty((cam.screensize[1], cam.screensize[0], 3), dtype=torch.float32, device=ctx.device)
+    image = image if isinstance(image, torch.Tensor) else torch.empty((cam.screen_size[1], cam.screen_size[0], 3), dtype=torch.float32, device=ctx.device)
     backprop_data = backprop_data if isinstance(backprop_data, BackpropagationData) else BackpropagationData.dummy()
     densif_data = densif_data if isinstance(densif_data, DensificationData) else DensificationData.dummy()
-    if image.shape[0] < cam.screensize[1] or image.shape[1] < cam.screensize[0] or image.shape[2] < 3:
-        raise ValueError(f"Image shape should be at least {(cam.screensize[1], cam.screensize[0], 3)}, was {image.shape}")
+    if image.shape[0] < cam.screen_size[1] or image.shape[1] < cam.screen_size[0] or image.shape[2] < 3:
+        raise ValueError(f"Image shape should be at least {(cam.screen_size[1], cam.screen_size[0], 3)}, was {image.shape}")
     if opts.save_data_for_backprop:
-        backprop_data.ensure_capacity(gs.num, cam.screensize)
+        backprop_data.ensure_capacity(gs.num, cam.screen_size)
     if opts.collect_data_for_densification:
         densif_data.ensure_capacity(gs.num)
-    ctx.ensure_capacity(gs.num, cam.screensize)
+    ctx.ensure_capacity(gs.num, cam.screen_size)
 
     if opts.collect_data_for_densification:
         ctx.projections.means = ctx.projections.means.detach()
     ctx.project(spy.grid((gs.num,)),
                 gs.means, gs.rotations, gs.scales, gs.sh_coefficients,
-                ctx.tiles.tiles_xy, cam.intrinsics, cam.half_fov_sin_cos, cam.extrinsics, opts.nearFar,
+                ctx.tiles.tiles_xy, cam.intrinsics, cam.half_fov_sin_cos, cam.extrinsics, opts.near_far,
                 gs.use_scale_exponential, gs.color_bias, opts.max_sh_degree, opts.save_data_for_backprop, opts.collect_data_for_densification,
                 ctx.projections.means, ctx.projections.depths, ctx.projections.covariances, ctx.projections.colors, ctx.instances.counts,
                 backprop_data.are_colors_clamped, densif_data.gaussian_image_radii)
@@ -188,9 +188,9 @@ def render(gs: gauss.Gaussians3D, cam: image.Camera, ctx: RenderContext, opts: R
         torch.index_select(ctx.instances.instances[:ctx.instances.num], dim=0, index=ctx.instances.sorted_keys_indices[:ctx.instances.num], out=ctx.instances.sorted_instances[:ctx.instances.num])
         ctx.find_tile_ranges(spy.grid((ctx.instances.num,)), ctx.instances.num, ctx.instances.sorted_keys, ctx.tiles.ranges)
 
-    render_grid = nearest_multiple(np.array(cam.screensize), ctx.tile_size).tolist()
+    render_grid = nearest_multiple(np.array(cam.screen_size), ctx.tile_size).tolist()
     ctx.render(spy.grid(render_grid), spy.thread_id(),
-               [*cam.screensize], ctx.tiles.tiles_xy,
+               [*cam.screen_size], ctx.tiles.tiles_xy,
                ctx.instances.sorted_instances, ctx.tiles.ranges,
                ctx.projections.means, ctx.projections.covariances, ctx.projections.colors, gs.opacities,
                gs.use_opacity_sigmoid, opts.alpha_thres, opts.max_alpha, opts.min_transmittance, opts.save_data_for_backprop, opts.background_color,

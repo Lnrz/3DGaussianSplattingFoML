@@ -45,7 +45,7 @@ class ScreenTiles:
 
 @dataclass
 class Camera:
-    screensize: Sequence[int]
+    screen_size: Sequence[int]
     intrinsics: torch.Tensor
     half_fov_sin_cos: torch.Tensor
     extrinsics: torch.Tensor

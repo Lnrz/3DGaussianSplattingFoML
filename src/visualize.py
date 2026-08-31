@@ -289,7 +289,7 @@ def main():
     slang_device = splatgs.create_slang_device(fp_mode=args.fp_mode, optimization_level=args.optim)
     render_module = splatgs.load_render_module(slang_device)
     ctx = splatgs.ctx(gaussians.num, args.tile_size, args.block_size, render_module, screen_size, args.exponential_resize)
-    opts = splatgs.RenderOptions(max_sh_degree=args.max_sh_degree, nearFar=args.near_far, background_color=args.background_color)
+    opts = splatgs.RenderOptions(max_sh_degree=args.max_sh_degree, near_far=args.near_far, background_color=args.background_color)
     intrinsics, hfsc = get_intrinsics_and_hfsc(width, height, fov_x)
     povCam = PovCamera(args.initial_position)
     cam = splatgs.Camera(screen_size, intrinsics, hfsc, povCam.view_matrix())
@@ -358,7 +358,7 @@ def main():
             gaussians.use_scale_exponential = info_gui.checkbox("Apply exponential to scale", gaussians.use_scale_exponential)
             gaussians.use_opacity_sigmoid = info_gui.checkbox("Apply sigmoid to opacity", gaussians.use_opacity_sigmoid)
             gaussians.color_bias = info_gui.slider_float("Color bias", gaussians.color_bias, -1., 1.)
-            info_gui.text(f"Near far planes: ({opts.nearFar[0]},{opts.nearFar[1]})")
+            info_gui.text(f"Near far planes: ({opts.near_far[0]},{opts.near_far[1]})")
             ctx.exponential_resizing = info_gui.checkbox("Exponential memory resize", ctx.exponential_resizing)
             info_gui.text(sep_str)
             info_gui.text(f"Floating point mode: {slang_fp_mode_enum_to_str(args.fp_mode)}")
@@ -377,7 +377,7 @@ def main():
                 try:
                     width, height = get_cli_input("Input screen size", types=[int, int])
                     if (width > 0) and (height > 0):
-                        cam.screensize = (width, height)
+                        cam.screen_size = (width, height)
                         img = torch.empty((height, width, 3), dtype=torch.float32, device="cuda")
                         img_ti = ti.field(ti.f32, (width, height, 3))
                         cam.intrinsics, cam.hfsc = get_intrinsics_and_hfsc(width, height, fov_x)
@@ -402,7 +402,7 @@ def main():
                 try:
                     new_near_far = get_cli_input("Input near far distances", types=[float, float])
                     if new_near_far[0] < new_near_far[1]:
-                        opts.nearFar = new_near_far
+                        opts.near_far = new_near_far
                     else:
                         print(f"Near plane must be further that far plane, near was {new_near_far[0]}, far was {new_near_far[1]}")
                 except Exception as e:
@@ -410,7 +410,7 @@ def main():
 
         if recreate_window:
             window.destroy()
-            window = ti.ui.Window(name=window_title, res=cam.screensize)
+            window = ti.ui.Window(name=window_title, res=cam.screen_size)
             canvas = window.get_canvas()
             gui = window.get_gui()
             recreate_window = False
