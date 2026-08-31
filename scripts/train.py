@@ -1,7 +1,6 @@
 import gc
 import time
 from argparse import ArgumentParser
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -12,11 +11,11 @@ from torchvision.transforms import v2
 from torch.utils.data import DataLoader
 from torchmetrics.functional.image import structural_similarity_index_measure
 
-import splatgs
 from script_utils import (
     resolve_data_path,
     slang_optim_str_to_enum, slang_fp_mode_str_to_enum
 )
+import splatgs
 
 
 def update_optim_state(optim: Optimizer, gaussians: splatgs.gauss.Gaussians3D, kept_gaussian_old_indices: torch.Tensor, kept_gaussian_new_indices: torch.Tensor):

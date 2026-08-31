@@ -1,9 +1,17 @@
+import sys
 from pathlib import Path
 
 import slangpy as spy
 
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+ROOT_DIR = Path(__file__).parent.parent
+DATA_DIR = ROOT_DIR / "data"
+SRC_DIR = ROOT_DIR / "src"
+
+
+# make splatgs importable
+sys.path.append(str(SRC_DIR))
+
 
 def resolve_data_path(path: str | Path):
     if not isinstance(path, Path):

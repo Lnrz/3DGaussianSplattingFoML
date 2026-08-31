@@ -1,6 +1,5 @@
 from collections.abc import Sequence
 import argparse
-import pathlib
 import time
 import re
 
@@ -9,12 +8,12 @@ import numpy as np
 import torch
 import taichi as ti
 
-import splatgs
 from script_utils import (
     resolve_data_path,
     slang_fp_mode_str_to_enum, slang_fp_mode_enum_to_str,
     slang_optim_str_to_enum, slang_optim_enum_to_str
 )
+import splatgs
 
 
 colorama.init()

@@ -9,11 +9,11 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import v2
 from torchmetrics.functional.image import peak_signal_noise_ratio, structural_similarity_index_measure, learned_perceptual_image_patch_similarity
 
-import splatgs
 from script_utils import (
     resolve_data_path,
     slang_optim_str_to_enum, slang_fp_mode_str_to_enum
 )
+import splatgs
 
 
 class ValidationNode:
