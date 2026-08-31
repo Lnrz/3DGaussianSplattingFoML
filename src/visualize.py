@@ -10,7 +10,8 @@ import torch
 import taichi as ti
 
 import splatgs
-from splatgs.slang import (
+from script_utils import (
+    resolve_data_path,
     slang_fp_mode_str_to_enum, slang_fp_mode_enum_to_str,
     slang_optim_str_to_enum, slang_optim_enum_to_str
 )
@@ -20,7 +21,6 @@ colorama.init()
 ti.init(arch=ti.cuda)
 
 
-DATA_DIR = pathlib.Path(__file__).parent.parent / "data"
 ERASE_LINE = "\033[K"
 ERASE_LINES_ONWARD = "\033[J"
 
@@ -132,30 +132,9 @@ class PovCamera:
         return x_local, y_local, z_local
 
 
-def resolve_model_path(input_str: str):
-    input_path = pathlib.Path(input_str)
-    if input_path.exists():
-        return input_path
-
-    path_in_data_dir = DATA_DIR / input_path
-    if path_in_data_dir.exists():
-        return path_in_data_dir
-
-    matches = list(DATA_DIR.rglob(input_str))
-    if not matches:
-        raise FileNotFoundError(f"Found no match in 'data' directory for '{input_str}'")
-    elif len(matches) > 2:
-        err_msg = f"Found too many matches in 'data' directory for '{input_str}':\n"
-        for match in matches:
-            err_msg += 4*" " + str(match.relative_to(DATA_DIR)) + "\n"
-        raise ValueError(err_msg)
-
-    return matches[0]
-
-
 def get_arguments():
     parser = argparse.ArgumentParser(description="A script to visualize Gaussian models in ply format.")
-    parser.add_argument("model", help="Model path. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
+    parser.add_argument("model", help="Path to PLY Gaussian model. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
     parser.add_argument("--screen-size", type=int, nargs="+", default=[1280, 720], metavar="size", help="Window screen size. Pass one value for square windows, two for width and height. Default to 1280x720.")
     parser.add_argument("--initial-position", type=float, nargs=3, default=[.0, -1., -2.], metavar=("x","y","z"), help="Initial camera position. Default to (0,-1,-2)")
     parser.add_argument("--movement-speed", type=float, default=.8, metavar="speed", help="Camera movement speed, measured in scene unit. Default to 0.8.")
@@ -173,7 +152,7 @@ def get_arguments():
     args = parser.parse_args()
 
     try:
-        args.model = resolve_model_path(args.model)
+        args.model = resolve_data_path(args.model)
     except Exception as e:
         parser.error(e)
     for value in args.screen_size:
@@ -368,7 +347,7 @@ def main():
             if info_gui.button("Change model"):
                 new_path = get_cli_input("Input model")
                 try:
-                    new_path = resolve_model_path(new_path)
+                    new_path = resolve_data_path(new_path)
                     gaussians = splatgs.gs_from_ply(new_path)
                     model_path = new_path
                 except Exception as e:

@@ -10,7 +10,10 @@ from torchvision.transforms import v2
 from torchmetrics.functional.image import peak_signal_noise_ratio, structural_similarity_index_measure, learned_perceptual_image_patch_similarity
 
 import splatgs
-from splatgs.slang import slang_optim_str_to_enum, slang_fp_mode_str_to_enum
+from script_utils import (
+    resolve_data_path,
+    slang_optim_str_to_enum, slang_fp_mode_str_to_enum
+)
 
 
 class ValidationNode:
@@ -163,8 +166,9 @@ def str_to_color(string: str):
 
 def get_args():
     parser = argparse.ArgumentParser(description="A script to validate Gaussian models")
-    parser.add_argument("datasets", type=str, help="Path to the base directory containing all the validation datasets.")
-    parser.add_argument("--models", metavar="path", type=str, default=None, help="Path to the base directory containing all the models to validate. If not specified will default to 'datasets'.")
+    parser.add_argument("datasets", type=str, help="Path to the base directory containing all the validation datasets. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
+    parser.add_argument("--models", metavar="path", type=str, default=None, help="Path to the base directory containing all the models to validate. "
+    " Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'. If not specified will default to 'datasets'.")
     parser.add_argument("-o", "--output", metavar="path", type=str, default="", help="Path where to save the metrics. If not specified the metrics will be printed to console.")
     parser.add_argument("--simple-mean", action="store_true", help="Calculate unweighted mean across datasets, ignoring image counts.")
     parser.add_argument("--factors", metavar="dataset=factor", action=DictPairAction, value_type=int, nargs="+", default={}, help="Downscaling factors to apply to the datasets.")
@@ -190,6 +194,9 @@ def get_args():
     if args.block_size < 1:
         parser.error(f"'block-size' must be at least 1, was {args.block_size}")
 
+    args.datasets = resolve_data_path(args.datasets)
+    if args.models:
+        args.models = resolve_data_path(args.models)
     args.workers = max(-1, args.workers)
     args.optim = slang_optim_str_to_enum(args.optim)
     args.fp_mode = slang_fp_mode_str_to_enum(args.fp_mode)

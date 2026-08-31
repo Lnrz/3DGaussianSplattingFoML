@@ -10,7 +10,10 @@ from matplotlib.widgets import Button, TextBox
 
 import splatgs
 from splatgs.image import CalibratedImages
-from splatgs.slang import slang_optim_str_to_enum, slang_fp_mode_str_to_enum
+from script_utils import (
+    resolve_data_path,
+    slang_optim_str_to_enum, slang_fp_mode_str_to_enum
+)
 
 
 class Slider:
@@ -102,7 +105,7 @@ class Slider:
 
 def get_args():
     parser = argparse.ArgumentParser(description="Script to compare Gaussian model renders with reconstruction images.")
-    parser.add_argument("reconstruction", type=str, help="Path to COLMAP reconstrution.")
+    parser.add_argument("reconstruction", type=str, help="Path to COLMAP reconstrution. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
     parser.add_argument("model", type=str, help="Path to PLY Gaussian model.")
     parser.add_argument("--downscale-factor", metavar="factor", type=int, default=1, help="Downscaling factor to use. Default to 1.")
     parser.add_argument("--background-color", metavar=("r", "g", "b"), nargs=3, type=float, default=[.5, .0, 1.], help="Background color to use. Default to purple.")
@@ -114,6 +117,8 @@ def get_args():
 
     args = parser.parse_args()
 
+    args.reconstruction = str(resolve_data_path(args.reconstruction))
+    args.model = str(resolve_data_path(args.model))
     args.optim = slang_optim_str_to_enum(args.optim)
     args.fp_mode = slang_fp_mode_str_to_enum(args.fp_mode)
     args.background_color = np.clip(args.background_color, 0., 1.).tolist()

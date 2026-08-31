@@ -8,53 +8,6 @@ SPLATGS_SHADER_PATH = str(pathlib.Path(__file__).parent / "shaders")
 SPLATGS_RENDER_SHADER = "render.slang"
 SPLATGS_ADC_SHADER = "adc.slang"
 
-_slang_fp_mode_str_to_enum_dict = {
-    "fast" : spy.SlangFloatingPointMode.fast,
-    "default" : spy.SlangFloatingPointMode.default,
-    "precise" : spy.SlangFloatingPointMode.precise
-}
-_slang_fp_mode_enum_to_str_dict = {enum : string for string, enum in _slang_fp_mode_str_to_enum_dict.items()}
-
-_slang_optim_str_to_enum_dict = {
-    "none" : spy.SlangOptimizationLevel.none,
-    "default" : spy.SlangOptimizationLevel.default,
-    "high" : spy.SlangOptimizationLevel.high,
-    "maximal" : spy.SlangOptimizationLevel.maximal
-}
-_slang_optim_enum_to_str_dict = {enum : string for string, enum in _slang_optim_str_to_enum_dict.items()}
-
-
-def slang_fp_mode_str_to_enum(fp_mode: str):
-    res = _slang_fp_mode_str_to_enum_dict.get(fp_mode.lower())
-    if res is None:
-        valid_modes = ", ".join(f"'{k}'" for k in _slang_fp_mode_str_to_enum_dict.keys())
-        raise ValueError(
-            f"'{fp_mode}' is not a valid floating point mode.\n" +
-            "Valid modes are:" + valid_modes + "."
-        )
-
-    return res
-
-
-def slang_fp_mode_enum_to_str(fp_mode: spy.SlangFloatingPointMode):
-    return _slang_fp_mode_enum_to_str_dict[fp_mode]
-
-
-def slang_optim_str_to_enum(optim: str):
-    res = _slang_optim_str_to_enum_dict.get(optim.lower())
-    if res is None:
-        valid_levels = ", ".join(f"'{k}'" for k in _slang_optim_str_to_enum_dict.keys())
-        raise ValueError(
-            f"'{optim}' is not a valid optimization level.\n" +
-            "Valid levels are:" + valid_levels + "."
-        )
-
-    return res
-
-
-def slang_optim_enum_to_str(optim: spy.SlangOptimizationLevel):
-    return _slang_optim_enum_to_str_dict[optim]
-
 
 def create_slang_device(
         type: spy.DeviceType=spy.DeviceType.cuda,

@@ -13,7 +13,10 @@ from torch.utils.data import DataLoader
 from torchmetrics.functional.image import structural_similarity_index_measure
 
 import splatgs
-from splatgs.slang import slang_optim_str_to_enum, slang_fp_mode_str_to_enum
+from script_utils import (
+    resolve_data_path,
+    slang_optim_str_to_enum, slang_fp_mode_str_to_enum
+)
 
 
 def update_optim_state(optim: Optimizer, gaussians: splatgs.gauss.Gaussians3D, kept_gaussian_old_indices: torch.Tensor, kept_gaussian_new_indices: torch.Tensor):
@@ -49,7 +52,7 @@ def update_optim_state(optim: Optimizer, gaussians: splatgs.gauss.Gaussians3D, k
 
 def get_arguments():
     parser = ArgumentParser(description="A script to train Gaussians models")
-    parser.add_argument("reconstruction",type=str, help="Path to the COLMAP reconstrution to use as training data.")
+    parser.add_argument("reconstruction",type=str, help="Path to the COLMAP reconstrution to use as training data. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
     parser.add_argument("-o", "--output", metavar="path", type=str, default="o.ply", help="Path where to save the trained model. Default to 'o.ply'.")
     parser.add_argument("--preset30k", action="store_true", help="Use the 30k iterations preset. The default is the 7k iterations preset.")
     parser.add_argument("--seed", metavar="n", type=int, default=42, help="Seed for the Gaussian splitting PRNG. Default to 42.")
@@ -88,6 +91,7 @@ def get_arguments():
     parser.add_argument("--disable-pin", action="store_true", help="Don't use pinned memory for training data.")
     args = parser.parse_args()
 
+    args.reconstruction = resolve_data_path(args.reconstruction)
     if args.preset30k:
         args.factors_iters[-1] = 30_000
         args.densify_until = 15_000
@@ -147,7 +151,6 @@ def main():
     render_module = splatgs.load_render_module(slang_device)
     adc_module = splatgs.load_adc_module(slang_device)
 
-    args.reconstruction = Path(args.reconstruction)
     rec_path = str(args.reconstruction / "sparse/0")
     gaussians = splatgs.gs_from_colmap(rec_path, workers=args.workers if (args.workers == -1 or args.workers > 0) else 1, autograd=True)
     ds = splatgs.ds_from_colmap(rec_path, str(args.reconstruction / "images"))
