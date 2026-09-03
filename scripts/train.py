@@ -51,7 +51,7 @@ def update_optim_state(optim: Optimizer, gaussians: splatgs.gauss.Gaussians3D, k
 
 
 def get_arguments():
-    parser = ArgumentParser(description="A script to train Gaussians models")
+    parser = ArgumentParser(description="Script to train Gaussians models")
     parser.add_argument("reconstruction",type=str, help="Path to the COLMAP reconstrution to use as training data. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
     parser.add_argument("-o", "--output", metavar="path", type=str, default=str(DATA_DIR / "o.ply"), help="Path where to save the trained model. Default to 'data/o.ply'.")
     parser.add_argument("--preset30k", action="store_true", help="Use the 30k iterations preset. The default is the 7k iterations preset.")
@@ -68,25 +68,25 @@ def get_arguments():
     parser.add_argument("--opac-reset-value", metavar="opac", type=float, default=.01, help="The value at which Gaussian opacities are reset to. Must be in range (0-1). Default to 0.01.")
     parser.add_argument("--log-interval", metavar="n", type=int, default=100, help="Interval at which to log training info. Set to 0 to disable. Default to 100.")
     parser.add_argument("--mean-lrs", metavar=("initial", "final"),type=float, nargs=2, default=[1.6e-4, 1.6e-6], help="Initial and final learning rate for Gaussian means."
-        " The learning rate of Gaussian means decay exponentially. Default to [1.6e-4, 1.6e-6].")
+        " The learning rate of Gaussian means decay exponentially. Relative to the scene extent. Default to [1.6e-4, 1.6e-6].")
     parser.add_argument("--rot-lr", metavar="lr", type=float, default=1e-3, help="Learning rate for Gaussian rotations. Default to 1e-3.")
     parser.add_argument("--scale-lr", metavar="lr", type=float, default=5e-3, help="Learning rate for Gaussian scales. Default to 5e-3.")
     parser.add_argument("--opac-lr", metavar="lr", type=float, default=2.5e-2, help="Learning rate for Gaussian opacities. Default to 2.5e-2")
     parser.add_argument("--sh-lr", metavar="lr", type=float, default=2.5e-3, help="Learning rate for Gaussian spherical harmonics coefficients. Default to 2.5e-3.")
     parser.add_argument("--dssim-weight", metavar="weight", type=float, default=.2, help="Weight of dssim loss wrt l1 loss. Default to 0.2.")
     parser.add_argument("--opac-threshold", metavar="opac", type=float, default=.005, help="Opacity below which Gaussians are pruned. Must be in range (0-1). Default to 0.005.")
-    parser.add_argument("--gradient-threshold", metavar="thres", type=float, default=6e-6, help="Threshold on the screen position gradient magnitude to determine which Gaussians will be densified. Default to 6e-6.")
+    parser.add_argument("--gradient-threshold", metavar="thres", type=float, default=6e-6, help="Threshold on the screen position gradient magnitude, expressed in normalized device coordinates, to determine which Gaussians will be densified. Default to 6e-6.")
     parser.add_argument("--scale-threshold", metavar="thres", type=float, default=.01, help="Threshold on Gaussian scales to determine if a Gaussian will be split or cloned. Relative to the scene extent. Default to 0.01.")
     parser.add_argument("--split-factor", metavar="fact", type=float, default=1.6, help="Factor by which Gaussian scales are divided when splitting. Default to 1.6.")
     parser.add_argument("--scene-radius-perc", metavar="perc", type=float, default=.1, help="Max radius a Gaussian can have relative to the scene extent before being pruned. Default to 0.1.")
     parser.add_argument("--image-radius-perc", metavar="perc", type=float, default=.5, help="Max radius a Gaussian can have relative to the image extent before being pruned. Nonpositive values disable the pruning. Default to 0.5.")
     parser.add_argument("--image-radius-prune-start", metavar="iter", type=int, default=3_001, help="Iteration from which pruning based on image radius will happen. Default to 3001.")
     parser.add_argument("--bg-color", metavar=("r", "g", "b") ,type=float, nargs=3, default=[], help="Background color to use when rendering. Channels must be in range [0-1]. If unset, a random background color will be used at every iteration.")
-    parser.add_argument("--optim", choices=["none", "default", "high", "maximal"], default="maximal", help="Optimization level for slang kernel compilation. Default to 'maximal'.")
-    parser.add_argument("--fp-mode", choices=["fast", "default", "precise"], default="precise", help="Floating point mode for slang kernel compilation. Default to 'precise'.")
+    parser.add_argument("--optim", choices=["none", "default", "high", "maximal"], default="maximal", help="Optimization level for Slang kernel compilation. Default to 'maximal'.")
+    parser.add_argument("--fp-mode", choices=["fast", "default", "precise"], default="precise", help="Floating point mode for Slang kernel compilation. Default to 'precise'.")
     parser.add_argument("--workers", metavar="n", type=int, default=0, help="Number of workers to use in the training loop. Default to 0.")
     parser.add_argument("--tile-size", metavar="n", type=int, default=16, help="Tile size for rendering. Default to 16.")
-    parser.add_argument("--block-size", metavar="n", type=int, default=256, help="Block size for slang kernels other than the rendering kernel."
+    parser.add_argument("--block-size", metavar="n", type=int, default=256, help="Block size for Slang kernels other than the rendering kernel."
     " The block size used for rendering is dictated by the value of 'tile-size', not 'block-size'. Default to 256.")
     parser.add_argument("--disable-pin", action="store_true", help="Don't use pinned memory for training data.")
     args = parser.parse_args()

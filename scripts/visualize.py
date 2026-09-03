@@ -132,22 +132,22 @@ class PovCamera:
 
 
 def get_arguments():
-    parser = argparse.ArgumentParser(description="A script to visualize Gaussian models in ply format.")
+    parser = argparse.ArgumentParser(description="Script to visualize Gaussian models.")
     parser.add_argument("model", help="Path to PLY Gaussian model. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
     parser.add_argument("--screen-size", type=int, nargs="+", default=[1280, 720], metavar="size", help="Window screen size. Pass one value for square windows, two for width and height. Default to 1280x720.")
     parser.add_argument("--initial-position", type=float, nargs=3, default=[.0, -1., -2.], metavar=("x","y","z"), help="Initial camera position. Default to (0,-1,-2)")
     parser.add_argument("--movement-speed", type=float, default=.8, metavar="speed", help="Camera movement speed, measured in scene unit. Default to 0.8.")
     parser.add_argument("--rotation-speed", type=float, default=.8, metavar="speed", help="Camera rotation speed, measured in radians. Default to 0.8.")
     parser.add_argument("--tile-size", type=int, default=16, metavar="size", help="Tile size for rendering. Default to 16.")
-    parser.add_argument("--block-size", type=int, default=256, metavar="size", help="Block size for slang kernels other than the rendering kernel."
+    parser.add_argument("--block-size", type=int, default=256, metavar="size", help="Block size for Slang kernels other than the rendering kernel."
         " The block size used for rendering is dictated by the value of 'tile_size', not 'block_size'. Default to 256.")
     parser.add_argument("--max-sh-degree", type=int, default=3, metavar="n", help="Maximum spherical harmonics degree for computing color. Default to 3.")
     parser.add_argument("--background-color", metavar=("r", "g", "b"), nargs=3, type=float, default=[.0, .0, .0], help="Background color to use. Default to black.")
     parser.add_argument("--fovx", type=float, default=60., metavar="fx", help="Camera horizontal field of view, measured in degrees. Default to 60 degrees.")
     parser.add_argument("--near-far", type=float, nargs=2, default=[.2, 100.], metavar=("z_near", "z_far"), help="Near and far plane distances from camera, measured in scene unit. Default to 0.2 100.")
     parser.add_argument("--exponential-resize", action="store_true", help="Enable exponential memory resizing. When capacity is exceeded, memory grows exponentially rather than resizing to the exact size requested.")
-    parser.add_argument("--fp-mode", choices=["fast", "default", "precise"], default="fast", help="Floating point mode for slang kernel compilation. Default to fast.")
-    parser.add_argument("--optim", choices=["none", "default", "high", "maximal"], default="maximal", help="Optimization level for slang kernel compilation. Default to maximal.")
+    parser.add_argument("--fp-mode", choices=["fast", "default", "precise"], default="fast", help="Floating point mode for Slang kernel compilation. Default to fast.")
+    parser.add_argument("--optim", choices=["none", "default", "high", "maximal"], default="maximal", help="Optimization level for Slang kernel compilation. Default to maximal.")
     args = parser.parse_args()
 
     try:

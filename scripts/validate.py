@@ -165,9 +165,28 @@ def str_to_color(string: str):
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="A script to validate Gaussian models")
+    parser = argparse.ArgumentParser(
+        description="""
+Script to validate Gaussian models.
+
+Mode:
+  Simple: Specify a single reconstruction directory (containing 'sparse/0'
+    and 'images' directories) and the model path.
+  Tree:   Build a validation tree from a directory containing more
+    reconstructions organized into subdirectories.
+    The models must have the same name of their corresponding reconstructions.
+    The models directory must mirror the reconstructions directory layout.
+    Alternatively, models can be put in the reconstructions directory
+    at the same level of their corresponding reconstructions.
+
+Settings Inheritance in Tree Mode:
+  Background colors and downsampling factors set at a directory level are
+  inherited by all its subdirectories and reconstructions.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("datasets", type=str, help="Path to the base directory containing all the validation datasets. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
-    parser.add_argument("--models", metavar="path", type=str, default=None, help="Path to the base directory containing all the models to validate. "
+    parser.add_argument("--models", metavar="path", type=str, default=None, help="Path to the base directory containing all the models to validate."
     " Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'. If not specified will default to 'datasets'.")
     parser.add_argument("-o", "--output", metavar="path", type=str, default="", help="Path where to save the metrics. If not specified the metrics will be printed to console.")
     parser.add_argument("--simple-mean", action="store_true", help="Calculate unweighted mean across datasets, ignoring image counts.")
@@ -175,10 +194,10 @@ def get_args():
     parser.add_argument("--backgrounds", metavar="dataset=r,g,b", action=DictPairAction, value_type=str_to_color, nargs="+", default={}, help="Background colors to use for rendering.")
     parser.add_argument("--workers", metavar="n", type=int, default=0, help="Number of workers to use in the validation loop. Default to 0.")
     parser.add_argument("--disable-pin", action="store_true", help="Don't use pinned memory for validation data.")
-    parser.add_argument("--optim", choices=["none", "default", "high", "maximal"], default="maximal", help="Optimization level for slang kernel compilation. Default to 'maximal'.")
-    parser.add_argument("--fp-mode", choices=["fast", "default", "precise"], default="fast", help="Floating point mode for slang kernel compilation. Default to 'fast'.")
+    parser.add_argument("--optim", choices=["none", "default", "high", "maximal"], default="maximal", help="Optimization level for Slang kernel compilation. Default to 'maximal'.")
+    parser.add_argument("--fp-mode", choices=["fast", "default", "precise"], default="fast", help="Floating point mode for Slang kernel compilation. Default to 'fast'.")
     parser.add_argument("--tile-size", metavar="n", type=int, default=16, help="Tile size for rendering. Default to 16.")
-    parser.add_argument("--block-size", metavar="n", type=int, default=256, help="Block size for slang kernels other than the rendering kernel."
+    parser.add_argument("--block-size", metavar="n", type=int, default=256, help="Block size for Slang kernels other than the rendering kernel."
     " The block size used for rendering is dictated by the value of 'tile-size', not 'block-size'. Default to 256.")
     args = parser.parse_args()
 

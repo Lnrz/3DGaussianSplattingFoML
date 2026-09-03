@@ -106,13 +106,13 @@ class Slider:
 def get_args():
     parser = argparse.ArgumentParser(description="Script to compare Gaussian model renders with reconstruction images.")
     parser.add_argument("reconstruction", type=str, help="Path to COLMAP reconstrution. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
-    parser.add_argument("model", type=str, help="Path to PLY Gaussian model.")
+    parser.add_argument("model", type=str, help="Path to PLY Gaussian model. Can be absolute, relative to the CWD, relative to the 'data' directory, or a search pattern in 'data'.")
     parser.add_argument("--downscale-factor", metavar="factor", type=int, default=1, help="Downscaling factor to use. Default to 1.")
     parser.add_argument("--background-color", metavar=("r", "g", "b"), nargs=3, type=float, default=[.5, .0, 1.], help="Background color to use. Default to purple.")
-    parser.add_argument("--optim", choices=["none", "default", "high", "maximal"], default="maximal", help="Optimization level for slang kernel compilation. Default to 'maximal'.")
-    parser.add_argument("--fp-mode", choices=["fast", "default", "precise"], default="fast", help="Floating point mode for slang kernel compilation. Default to 'fast'.")
+    parser.add_argument("--optim", choices=["none", "default", "high", "maximal"], default="maximal", help="Optimization level for Slang kernel compilation. Default to 'maximal'.")
+    parser.add_argument("--fp-mode", choices=["fast", "default", "precise"], default="fast", help="Floating point mode for Slang kernel compilation. Default to 'fast'.")
     parser.add_argument("--tile-size", metavar="n", type=int, default=16, help="Tile size for rendering. Default to 16.")
-    parser.add_argument("--block-size", metavar="n", type=int, default=256, help="Block size for slang kernels other than the rendering kernel."
+    parser.add_argument("--block-size", metavar="n", type=int, default=256, help="Block size for Slang kernels other than the rendering kernel."
     " The block size used for rendering is dictated by the value of 'tile-size', not 'block-size'. Default to 256.")
 
     args = parser.parse_args()
