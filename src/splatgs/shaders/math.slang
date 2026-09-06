@@ -22,7 +22,9 @@ namespace ShNorm {
     public static const float N3_p3 = -0.5900435899266435;
 }
 
-
+// Convert quaternion to rotation matrix
+//
+// Quaternion must be normalized and in WXYZ order
 [Differentiable]
 public float3x3 quaternionToMatrix(float4 quaternion) {
     let w = quaternion.x;
@@ -42,13 +44,18 @@ public float3x3 quaternionToMatrix(float4 quaternion) {
     );
 }
 
+// Return true if no value in x is NaN or inf
 public bool isValidFloat<T, let n : int>(vector<T, n> x) where T : __BuiltinFloatingPointType {
     return all(!isnan(x) && !isinf(x));
 }
 
-// [ a b ]
-// [ c d ]
+// Compute the eigenvalues of a 2x2 matrix
+//
+// Return the bigger eigenvalue first, the smaller second
 public float2 compute2x2Eigenvalues(float2x2 M) {
+    // Assuming the matrix to be
+    // [ a b ]
+    // [ c d ]
     let aMd = M._11 - M._22;
     let discrim = aMd * aMd + 4 * M._12 * M._21;
     let aPdHalf = (M._11 + M._22) / 2.;

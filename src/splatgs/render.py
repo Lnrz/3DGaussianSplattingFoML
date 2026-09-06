@@ -10,6 +10,17 @@ from splatgs import gauss, image
 
 @dataclass
 class RenderOptions:
+    """Class holding render options
+
+    - `max_sh_degree`: maximum SH degree to use when computing Gaussian colors
+    - `background_color`: background color
+    - `alpha_thres`: alpha threshold below which Gaussians are discarded
+    - `max_alpha`: Gaussian maximum alpha
+    - `min_transmittance`: transmittance threshold below which pixels stop color accumulation
+    - `near_far`: near and far plane distances for frustrum culling
+    - `save_data_for_backprop`: if True, save data for backpropagation
+    - `collect_data_for_densification`: if True, collect data for densification
+    """
     max_sh_degree: int = 4
     background_color: Sequence[float] = field(default_factory=lambda: [.0, .0, .0])
     alpha_thres: float = 1./255.
@@ -22,6 +33,18 @@ class RenderOptions:
 
 @dataclass
 class RenderContext:
+    """Class holding render data
+
+    - `projections`: `ProjectedGaussians` for projected Gaussian data
+    - `instances`: `GaussiansInstances` for instance data
+    - `tiles`: `ScreenTiles` for tile data
+    - `exponential_resizing`: if True, increase instance capacity by powers of two
+    - `shader_module`: render Slang module
+    - `tile_size`: screen tile size
+    - `block_size`: Slang kernels block size
+    - `device`: Torch device where data are stored
+    """
+
     projections: gauss.ProjectedGaussians
     instances: gauss.GaussiansInstances
     tiles: image.ScreenTiles
@@ -41,7 +64,7 @@ class RenderContext:
     @classmethod
     def from_settings(cls, gaussian_num: int, tile_size: int, block_size: int, slang_module: spy.Module, screensize: Sequence[int] | None=None, exponential_resizing: bool=False, device="cuda"):
         projections = gauss.ProjectedGaussians.from_size(gaussian_num, device)
-        tiles = image.ScreenTiles.from_screensize(screensize, tile_size, device) if screensize is not None else None
+        tiles = image.ScreenTiles.from_screen_size(screensize, tile_size, device) if screensize is not None else None
         instances = gauss.GaussiansInstances.from_size(gaussian_num, device=device)
         
         ctx = cls(projections, instances, tiles, exponential_resizing, slang_module, None, None, None, None, None, tile_size, block_size, device)
@@ -50,6 +73,8 @@ class RenderContext:
         return ctx
 
     def change_shader_size(self, tile_size: int = 0, block_size: int = 0):
+        """Change screen tile size to `tile_size` and Slang kernels block size to `block_size`"""
+
         tile_size = tile_size if tile_size > 0 else self.tile_size
         block_size = block_size if block_size > 0 else self.block_size
         if tile_size == self.tile_size and block_size == self.block_size:
@@ -59,18 +84,28 @@ class RenderContext:
         self.block_size = block_size
         self.__create_functions()
 
-    def ensure_capacity(self, gaussian_num: int, screensize):
+    def ensure_capacity(self, gaussian_num: int, screen_size):
+        """Ensure tensor capacities are big enough for `gaussian_num` Gaussians and for `screen_size`
+
+        If actual capacities are bigger does nothing.
+        """
+
         self.projections.ensure_capacity(gaussian_num)
         self.instances.ensure_capacity(gaussian_num)
         if self.tiles is not None:
-            self.tiles.ensure_capacity(screensize, self.tile_size)
+            self.tiles.ensure_capacity(screen_size, self.tile_size)
         else:
-            self.tiles = image.ScreenTiles.from_screensize(screensize, self.tile_size, self.device)
+            self.tiles = image.ScreenTiles.from_screen_size(screen_size, self.tile_size, self.device)
     
     def allocate_instances(self, gaussian_num: int):
+        """Ensure tensor capacities are big enough for the current number of Gaussian instances
+
+        If actual capacities are bigger does nothing.
+        """
         self.instances.allocate_instances(self.instances.cumulative_counts[gaussian_num-1].item(), self.exponential_resizing)
 
     def reset_tile_ranges(self):
+        """Zero out tile ranges"""
         self.tiles.ranges.zero_()
 
     def __create_functions(self):
@@ -83,6 +118,13 @@ class RenderContext:
 
 @dataclass
 class BackpropagationData:
+    """Class holding backpropagation data
+
+    - `accumulated_transmittances`: pixel final transmittances
+    - `processed_gaussian_counts`: pixel processed Gaussian counts
+    - `are_colors_clamped`: keep track of clamped Gaussian color channels
+    """
+
     accumulated_transmittances: torch.Tensor
     processed_gaussian_counts: torch.Tensor
     are_colors_clamped: torch.Tensor
@@ -97,6 +139,8 @@ class BackpropagationData:
 
     @classmethod
     def from_settings(cls, gaussian_count: int, screen_size: Sequence[int] | None=None, device="cuda"):
+        """Initialize `BackpropagationData` tensors for `gaussian_count` Gaussians and `screen_size`"""
+
         backprop_data = cls.dummy(device=device)
         if screen_size is None:
             backprop_data.are_colors_clamped = torch.tensor((gaussian_count, 3), dtype=torch.bool, device=device)
@@ -106,6 +150,11 @@ class BackpropagationData:
         return backprop_data
 
     def ensure_capacity(self, gaussian_count: int, screen_size: Sequence[int]):
+        """Ensure tensor capacities are big enough for `gaussian_count` Gaussians and for `screen_size`
+
+        If actual capacities are bigger does nothing.
+        """
+
         if (self.accumulated_transmittances.shape[0] < screen_size[0]) or (self.accumulated_transmittances.shape[1] < screen_size[1]):
             self.accumulated_transmittances = torch.zeros((screen_size[1], screen_size[0]), dtype=torch.float32, device=self.accumulated_transmittances.device)
         if (self.processed_gaussian_counts.shape[0] < screen_size[0]) or (self.processed_gaussian_counts.shape[1] < screen_size[1]):
@@ -117,6 +166,12 @@ class BackpropagationData:
 
 @dataclass
 class DensificationData:
+    """Class holding densification data
+
+    - `gaussian_image_radii`: maximum Gaussian image radii
+    - `view_counters`: Gaussian visibility counters
+    """
+
     gaussian_image_radii: torch.Tensor
     view_counters: torch.Tensor
 
@@ -129,27 +184,52 @@ class DensificationData:
 
     @classmethod
     def from_settings(cls, gaussian_count: int, device="cuda"):
+        """Initialize `DensificationData` tensors for `gaussian_count` Gaussians"""
+
         densif_data = cls.dummy(device=device)
         densif_data.ensure_capacity(gaussian_count=gaussian_count)
 
         return densif_data
 
     def ensure_capacity(self, gaussian_count: int):
+        """Ensure tensor capacities are big enough for `gaussian_count` Gaussians
+
+        If actual capacities are bigger does nothing.
+        """
+
         if self.gaussian_image_radii.shape[0] < gaussian_count:
             self.gaussian_image_radii = torch.zeros(gaussian_count, dtype=torch.float32, device=self.gaussian_image_radii.device)
         if self.view_counters.shape[0] < gaussian_count:
             self.view_counters = torch.zeros(gaussian_count, dtype=torch.int32, device=self.view_counters.device)
 
     def zero(self):
+        """Zero out tensors"""
         self.gaussian_image_radii.zero_()
         self.view_counters.zero_()
 
 
 def nearest_multiple(values: np.ndarray, multiple: int):
+    """Return the nearest multiples of `multiple` greater or equal than `values`"""
     return (values + multiple - 1) // multiple * multiple
 
 
 def render(gs: gauss.Gaussians3D, cam: image.Camera, ctx: RenderContext, opts: RenderOptions=None, image: torch.Tensor | None=None, backprop_data: BackpropagationData | None=None, densif_data: DensificationData | None=None):
+    """Render Gaussians
+
+    - `gs`: `Gaussians3D` to render
+    - `cam`: `Camera` from which to render
+    - `ctx`: `RenderContext` for holding render data
+    - `opts`: render options
+    - `image`: tensor where to write the image, must be at least HxWx3
+    - `backprop_data`: `BackpropagationData` for storing backpropagation data
+    - `densif_data`: `DensificationData` for storing densification data
+
+    Return:
+    - rendered image (HxWx3)
+    - `BackpropagationData`
+    - `DensificationData`
+    """
+
     opts = opts if isinstance(opts, RenderOptions) else RenderOptions()
     image = image if isinstance(image, torch.Tensor) else torch.empty((cam.screen_size[1], cam.screen_size[0], 3), dtype=torch.float32, device=ctx.device)
     backprop_data = backprop_data if isinstance(backprop_data, BackpropagationData) else BackpropagationData.dummy()

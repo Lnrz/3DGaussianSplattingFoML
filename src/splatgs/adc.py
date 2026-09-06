@@ -10,6 +10,21 @@ from splatgs import gauss
 
 @dataclass
 class AdaptiveDensityControl:
+    """Class holding adaptive density control data
+
+    - `accumulated_norms`: Gaussian accumulated gradient norms
+    - `prng`: Torch Generator for spawning Gaussians when splitting
+    - `block_size`: block size of Slang kernels
+    - `shader_module`: adaptive density control Slang module
+    - `scale_threshold`: scale threshold above which Gaussians are split and below which Gaussians are cloned
+    - `world_radius_threshold`: scale threshold above which Gaussians are pruned
+    - `image_radius_threshold`: image radius threshold above which Gaussians are pruned
+    - `opacity_threshold`: opacity threshold below which Gaussians are pruned
+    - `gradient_threshold`: gradient norm threshold above which Gaussians are densified
+    - `split_factor`: factor by which dividing Gaussian scales when splitting
+    - `opacity_reset_value`: opacity reset value
+    """
+
     accumulated_norms: torch.Tensor
 
     prng: torch.Generator
@@ -45,6 +60,8 @@ class AdaptiveDensityControl:
                    opacity_reset_value)
 
     def change_block_size(self, block_size: int):
+        """Change block size of Slang kernels"""
+
         if block_size != self.block_size:
             self.block_size = block_size
             self.accumulate_norms = self.shader_module.accumulateNorms.call_group_shape(spy.slangpy.Shape(block_size))
@@ -52,9 +69,24 @@ class AdaptiveDensityControl:
             self.create_copies = self.shader_module.createCopies.call_group_shape(spy.slangpy.Shape(block_size))
 
     def accumulate_gradients(self, gradients: torch.Tensor, scales: Sequence[float] | None=None):
+        """Add `gradients`' norms to accumulated norms, after applying `scales` to their x and y components"""
         self.accumulate_norms(spy.grid(self.accumulated_norms.shape), self.accumulated_norms, gradients, scales if scales is not None else [1., 1.])
 
     def adapt_density(self, gs: gauss.Gaussians3D, gs_view_counters: torch.Tensor, gs_img_radii: torch.Tensor, reset_opacity: bool=False):
+        """Adapt Gaussian density
+
+        - `gs`: `Gaussians3D` to adapt
+        - `gs_view_counters`: Gaussian visibility counters
+        - `gs_img_radii`: Gaussian maximum image radii
+        - `reset_opacity`: if True, reset Gaussian opacities
+
+        Return a tuple consisting of:
+        - kept Gaussian old indices
+        - kept Gaussian new indices
+
+        With "kept" meaning Gaussians unaffected by the densification process.
+        """
+
         counts = torch.empty(gs.num, dtype=torch.int32, device=self.accumulated_norms.device)
         cumulative_counts = torch.empty_like(counts)
         are_kept = torch.zeros(gs.num, dtype=torch.bool, device=self.accumulated_norms.device)

@@ -4,7 +4,10 @@ import math;
 extern static const uint TILE_SIZE = 16;
 static const uint TILE_SIZE_SQRD = TILE_SIZE * TILE_SIZE;
 
-// works only for positive depth (could be made to work with negative depths but they are culled)
+// Create Gaussian instance key
+//
+// The key is a uint64, with the higher 32 bits taken from "tileId", and the lower 32 bits from "depth"
+// When instances are sorted by keys, they are sorted per tile first and per depth second (works only for positive depths)
 uint64_t createKey(int tileId, float depth) {
     return ((uint64_t)reinterpret<uint>(tileId) << 32) | (uint64_t)reinterpret<uint>(depth);
 }
@@ -13,10 +16,18 @@ uint extractTileId(int64_t key) {
     return (uint)(reinterpret<uint64_t>(key) >> 32);
 }
 
+// Return the ID of the tile of coordinates (x,y)
+//
+// "tilesXY" is the number of tiles along the x and y axes
 int getTileId(int x, int y, int2 tilesXY) {
     return x + y * tilesXY.x;
 }
 
+// Project point from camera space to screen space
+//
+// "intrisics" must contain, in this order:
+// - focal lengths, along x and y
+// - principal point coordinates
 [Differentiable]
 float2 cameraToScreen(float3 cameraPos, no_diff float4 intrinsics) {
     let focalX = intrinsics.x;
@@ -29,6 +40,11 @@ float2 cameraToScreen(float3 cameraPos, no_diff float4 intrinsics) {
     );
 }
 
+// Calculate the projective transform approximation
+//
+// "halfFovSinCos" must contain, in this order:
+// - sin(half x fov), cos(half x fov)
+// - sin(half y fov), cos(half y fov)
 [Differentiable]
 float2x3 getProjectionApproximation(float3 cameraPos, no_diff float2 focals, no_diff float4 halfFovSinCos) {
     let gaussianTan = cameraPos.xy / cameraPos.z;
@@ -43,6 +59,9 @@ float2x3 getProjectionApproximation(float3 cameraPos, no_diff float2 focals, no_
     );
 }
 
+// Compute the projected Gaussian covariance matrix using the approximation of the projective transform
+//
+// "quaternion" must be in WXYZ order
 [Differentiable]
 float2x2 compute2dCovariance(float3 scale, float4 quaternion, no_diff float3x3 viewTransform, float2x3 projApprox) {
     let rotationMat = quaternionToMatrix(normalize(quaternion));
@@ -56,6 +75,11 @@ float2x2 compute2dCovariance(float3 scale, float4 quaternion, no_diff float3x3 v
     return mul(jw, mul(sigma, transpose(jw)));
 }
 
+// Count the number of tiles intersected by a Gaussian
+//
+// "covariances" must contain, in this order:
+// - x variance, y variance, covariance
+// "tilesXY" is the number of tiles along the x and y axes
 int countIntersections(float2 screenPos, float3 covariances, int2 tilesXY) {
     let halfSize = 3. * sqrt(covariances.xy);
     let minPos = screenPos - halfSize;
@@ -68,6 +92,9 @@ int countIntersections(float2 screenPos, float3 covariances, int2 tilesXY) {
     return bboxSpan.x * bboxSpan.y;
 }
 
+// Compute camera center from its extrinsics
+//
+// The extrinsics are assumed to be in the form [R|t]
 float3 getCameraCenter(float3x4 extrinsics) {
     let rotation = (float3x3)extrinsics;
     let translation = extrinsics._14_24_34;
@@ -79,6 +106,11 @@ float3 getDirection(no_diff float3 from, float3 to) {
     return normalize(to - from);
 }
 
+// Compute color given SH coefficients and view direction
+//
+// "shCoefs" is supposed to have shape (16,Gaussians,RGB)
+// "idx" is the Gaussian index
+// "maxDeg" max SH degree to compute color from
 [BackwardDerivative(computeColorBwd)]
 float3 computeColor(float3 direction, DiffTensor<float, 3> shCoefs, uint idx, int maxDeg) {
     let x = direction.x;
@@ -259,19 +291,24 @@ void computeColorBwd(inout DifferentialPair<float3> direction, DiffTensor<float,
     direction = diffPair(direction.p, directionGrad);
 }
 
-// sphere-frustrum test
+// Return true if a Gaussian is culled
+//
+// "halfFovSinCos" must contain, in this order:
+// - sin(half x fov), cos(half x fov)
+// - sin(half y fov), cos(half y fov)
 bool isCulled(float3 cameraPos, float3 scales, float4 halfFovSinCos, float2 nearFar) {
     if (cameraPos.z < nearFar.x || cameraPos.z > nearFar.y || !isValidFloat(cameraPos)) return true;
-    
+
+    // sphere-frustrum test
     let radius = 3. * max(max(scales.x, scales.y), scales.z); // 99+% confidence bounding sphere
-    
+
     let sinx = halfFovSinCos.x;
     let cosx = halfFovSinCos.y;
     let leftOutNormal = -float3(cosx, 0., sinx);
     let rightOutNormal = -float3(-cosx, 0., sinx);
     if (dot(cameraPos, leftOutNormal) > radius ||
         dot(cameraPos, rightOutNormal) > radius) return true;
-    
+
     let siny = halfFovSinCos.z;
     let cosy = halfFovSinCos.w;
     let upOutNormal = -float3(0., cosy, siny);
@@ -282,6 +319,7 @@ bool isCulled(float3 cameraPos, float3 scales, float4 halfFovSinCos, float2 near
     return false;
 }
 
+// Project Gaussians into screen space
 [BackwardDerivative(projectGaussiansBwd)]
 void projectGaussians(
     uint idx,
@@ -436,6 +474,7 @@ void projectGaussiansBwd(
     scales._grad_out[idx, 2] += scaleGrad.z;
 }
 
+// Increment Gaussian visibility counters
 void incrementViewCounters(uint idx, int gaussianCount, IRWTensor<int, 1> viewCounters, ITensor<int, 1> counts) {
     if (idx >= gaussianCount) return;
     if (counts[idx] <= 0) return;
@@ -443,6 +482,7 @@ void incrementViewCounters(uint idx, int gaussianCount, IRWTensor<int, 1> viewCo
     viewCounters[idx] = viewCounters[idx] + 1;
 }
 
+// Create Gaussian instances
 void createGaussianInstances(
     uint idx,
     uint gaussianCount,
@@ -483,6 +523,7 @@ void createGaussianInstances(
     }
 }
 
+// Find Gaussian instance range for each tile
 void findTileRanges(uint idx, uint keyCount, ITensor<int64_t, 1> keys, IWTensor<int, 2> ranges) {
     if (idx >= keyCount) return;
 
@@ -514,6 +555,10 @@ struct Gaussians2D {
 groupshared Gaussians2D sharedGaussians;
 groupshared Atomic<uint> finishedThreadNum;
 
+// Calculate the pixel associated with the thread
+//
+// "localThreadId" is the ID of the thread in its block
+// "tileId" is the ID of the block to which the thread belong
 uint2 getPixelCoords(uint localThreadId, uint tileId, int tilesAlongX) {
     let tileX = tileId % tilesAlongX;
     let tileY = tileId / tilesAlongX;
@@ -553,7 +598,10 @@ float computeGaussianAlpha(int sharedGaussianIdx, float2 pixelCenter, bool useSi
     return opacity * exp(-.5 * dot(delta, mul(invCovariance, delta)));
 }
 
-// IMPORTANT slangpy always uses 1d indices for the threads, even when specifying a 2D grid
+// Render Gaussians to screen
+//
+// IMPORTANT
+// SlangPy always uses 1d indices for threads, even when specifying a 2D grid
 [BackwardDerivative(renderGaussiansBwd)]
 void renderGaussians(
     uint2, uint threadId,
@@ -576,7 +624,7 @@ void renderGaussians(
     TensorView<int> processedGaussianCount)
 {
     let workgroupSize = WorkgroupSize().x;
-    let tileId = threadId / workgroupSize; // here we assume that each tile is mapped to a workgroup
+    let tileId = threadId / workgroupSize; // here we assume that each tile is mapped to a workgroup/block
     let localThreadId = threadId % workgroupSize;
     let pixelCoords = getPixelCoords(localThreadId, tileId, tilesXY.x);
     let pixelCenter = pixelCoords + .5;
@@ -643,6 +691,7 @@ void renderGaussians(
 
 groupshared int sharedBlockMaxGaussians;
 
+// Get the maximum number of Gaussians a thread in the block has processed
 int getBlockMaxGaussians(uint localThreadId, int threadMaxGaussians) {
     if (localThreadId == 0) sharedBlockMaxGaussians = 0;
     GroupMemoryBarrierWithGroupSync();

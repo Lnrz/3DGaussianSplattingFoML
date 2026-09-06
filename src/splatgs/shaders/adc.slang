@@ -3,6 +3,7 @@ import math;
 import rand;
 
 
+// Accumulate "gradients" norms into "accum", scaling their components by "scales"
 void accumulateNorms(uint idx, IRWTensor<float, 1> accum, ITensor<float, 2> gradients, float2 scales) {
     if (idx >= accum.shape[0]) return;
 
@@ -10,6 +11,7 @@ void accumulateNorms(uint idx, IRWTensor<float, 1> accum, ITensor<float, 2> grad
     accum[idx] += length(viewPosGrad);
 }
 
+// Determine which Gaussians are pruned, kept or densified
 void countCopies(uint idx,
     ITensor<float, 1> accumNorms,
     ITensor<int, 1> viewCounters,
@@ -45,6 +47,7 @@ void countCopies(uint idx,
     counts[idx] = (maxWorldRadius > worldRadiusThreshold || gaussianImageRadii[idx] > imageRadiusThreshold)? 0 : 1;
 }
 
+// Copy Gaussian data into the new tensors
 void copyGaussian(uint srcIdx, int dstIdx,
     float3 mean, float4 rotation, float3 scale, float opacity, ITensor<float, 3> inShCoefs,
     IWTensor<float, 2> outMeans, IWTensor<float, 2> outRotations, IWTensor<float, 2> outScales, IWTensor<float, 3> outShCoefs, IWTensor<float, 1> outOpacities)
@@ -66,6 +69,7 @@ void copyGaussian(uint srcIdx, int dstIdx,
     }
 }
 
+// Sample two points from the Gaussian specified by "mean", "scale", and "quaternion"
 Tuple<float3, float3> sampleGaussian(inout uint64_t state, float3 mean, float3 scale, float4 quaternion) {
     float us[6];
     for (int i = 0; i < us.getCount(); i++) {
@@ -87,6 +91,7 @@ Tuple<float3, float3> sampleGaussian(inout uint64_t state, float3 mean, float3 s
     return makeTuple(samples[0], samples[1]);
 }
 
+// Densify Gaussians
 void createCopies(uint idx, uint64_t seed,
     ITensor<int, 1> counts,
     ITensor<int, 1> cumCounts,
