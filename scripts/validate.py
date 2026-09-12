@@ -65,7 +65,7 @@ class ValidationNode:
         self.background = opts.get(self.path_part, {}).get("background", [.0, .0, .0] if self.is_root else self.parent.background)
 
         for child in self.children:
-            child.validate(ctx, opts, workers, pin_memory)
+            child.validate(ctx, opts, workers, pin_memory, simple_mean)
 
         if self.children:
             self.image_count = sum([child.image_count for child in self.children])
