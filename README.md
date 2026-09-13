@@ -102,16 +102,16 @@ From `comparison.py`
     </thead>
     <tbody>
         <tr>
-            <td><b>3DGS (from Paper)</b></td>
+            <td><b>3DGS</b></td>
             <td>27.21</td><td>0.815</td><td>0.214</td><td>41m 33s</td>
             <td>23.14</td><td>0.841</td><td>0.183</td><td>26m 54s</td>
             <td>29.41</td><td>0.903</td><td>0.243</td><td>36m 2s</td>
         </tr>
         <tr>
-            <td><b>This Project</b></td>
-            <td>24.31</td><td>0.729</td><td>0.256</td><td>41m 51s</td>
-            <td>20.29</td><td>0.694</td><td>0.277</td><td>48m 2s</td>
-            <td>24.00</td><td>0.744</td><td>0.265</td><td>1h 17m 48s</td>
+            <td><b>splatgs</b></td>
+            <td>23.33</td><td>0.691</td><td>0.283</td><td>41m 51s</td>
+            <td>20.39</td><td>0.698</td><td>0.273</td><td>48m 2s</td>
+            <td>27.02</td><td>0.860</td><td>0.281</td><td>1h 17m 48s</td>
         </tr>
     </tbody>
 </table>
