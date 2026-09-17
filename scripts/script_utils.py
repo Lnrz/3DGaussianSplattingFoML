@@ -1,7 +1,18 @@
 import sys
 from pathlib import Path
 
+import torch
 import slangpy as spy
+
+
+# check for slangpytorch
+try:
+    import slangpy_torch
+    _allow_torch_fallback = slangpy_torch.get_api_ptr() == 0
+except:
+    _allow_torch_fallback = True
+
+spy.set_allow_torch_fallback(_allow_torch_fallback)
 
 
 ROOT_DIR = Path(__file__).parent.parent
